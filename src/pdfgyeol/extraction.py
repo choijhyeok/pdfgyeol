@@ -7,7 +7,7 @@ from typing import Any
 from unicodedata import normalize
 
 import pdfplumber
-from pdfminer.layout import LTChar, LTItem
+from pdfminer.layout import LTChar, LTItem, LTPage
 from pdfplumber.page import Page as PDFPage
 
 from .models import (
@@ -45,6 +45,28 @@ class _ExtractionPage(PDFPage):
             "adv": obj.adv,
             "upright": obj.upright,
         }
+
+
+class _NativePage(_ExtractionPage):
+    @property
+    def layout(self) -> LTPage:
+        if not hasattr(self, "_layout"):
+            # Match pdfplumber's Page.layout with the audited interpreter adapter.
+            from pdfplumber.page import PDFPageAggregatorWithMarkedContent
+            from pdfplumber.utils.exceptions import PdfminerException
+
+            from ._native_extraction import NativeInterpreter
+
+            device = PDFPageAggregatorWithMarkedContent(
+                self.pdf.rsrcmgr, pageno=self.page_number, laparams=self.pdf.laparams,
+            )
+            interpreter = NativeInterpreter(self.pdf.rsrcmgr, device)
+            try:
+                interpreter.process_page(self.page_obj)
+            except Exception as error:
+                raise PdfminerException(error)
+            self._layout: LTPage = device.get_result()
+        return self._layout
 
 
 def _color(value: Any) -> Color:
@@ -169,14 +191,20 @@ def extract_pdf(path: str | Path, *, password: str | None = None) -> Document:
         stream.seek(0)
         plumber_version = version("pdfplumber")
         miner_version = version("pdfminer.six")
-        # The LTChar projection was checked against these versions. An upgrade
-        # can use native object processing until its character fields are audited.
+        # Use stock pdfplumber object processing until dependency upgrades
+        # have been audited for the projected fields and native lexer.
         project_chars = (plumber_version, miner_version) == ("0.11.11", "20260107")
+        page_class = _ExtractionPage
+        if project_chars:
+            from ._native_extraction import native_available
+
+            if native_available():
+                page_class = _NativePage
         with pdfplumber.open(stream, password=password) as pdf:
             pages = []
             for source in pdf.pages:
                 if project_chars:
-                    source = _ExtractionPage(
+                    source = page_class(
                         pdf, source.page_obj, source.page_number, source.initial_doctop,
                     )
                 try:

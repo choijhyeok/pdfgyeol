@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools>=77", "setuptools-rust>=1.11"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,6 +9,7 @@ description = "Source-preserving PDF layout, reading order, and JSON export"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
+license-files = ["LICENSE", "LICENSE-THIRD-PARTY"]
 dependencies = ["pdfplumber>=0.11.11,<0.12"]
 
 [project.scripts]
@@ -21,7 +22,7 @@ test = ["pytest>=8", "reportlab>=4"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-pdfgyeol = ["py.typed"]
+pdfgyeol = ["py.typed", "_native.pyi"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
