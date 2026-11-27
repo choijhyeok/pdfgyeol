@@ -9,9 +9,9 @@ from reportlab.pdfgen.canvas import Canvas
 from pdfgyeol import LayoutConfig, extract_pdf, infer_page, iter_layout
 
 
-def pdf_page(tmp_path, draw):
+def pdf_page(tmp_path, draw, *, pagesize=(600, 800)):
     path = tmp_path / "layout.pdf"
-    canvas = Canvas(str(path), pagesize=(600, 800), invariant=1)
+    canvas = Canvas(str(path), pagesize=pagesize, invariant=1)
     canvas.setFont("Helvetica", 10)
     draw(canvas)
     canvas.save()
@@ -163,6 +163,92 @@ def test_sparse_ambiguous_region_has_deterministic_permutations(tmp_path, jitter
     assert layout == infer_page(page)
     for candidate in choice.candidates:
         exactly_once(page, replace(layout, reading_order=candidate.region_ids))
+    exactly_once(page, layout)
+
+
+@pytest.mark.parametrize("count", [4, 8])
+def test_spaced_measurements_have_a_bounded_row_alternative(tmp_path, count):
+    pairs = [
+        ("Temperature", "18 C"), ("Humidity", "45 %"), ("Pressure", "1012 hPa"), ("Wind", "3 m/s"),
+        ("Rain", "0 mm"), ("Dew point", "9 C"), ("Visibility", "12 km"), ("Elevation", "140 m"),
+    ][:count]
+    heading = "Measurement log for the North Ridge observation station"
+    footer = "End of measurements for the North Ridge observation station"
+
+    def draw(c):
+        if count > 4:
+            c.setFont("Helvetica-Bold", 13)
+            c.drawString(35, 460, heading)
+            c.drawString(35, 100, footer)
+            c.setFont("Helvetica", 10)
+        for j, (label, value) in enumerate(pairs):
+            y = 400 - 28 * j
+            c.drawString(35, y, label)
+            if count == 4:
+                c.drawString(250, y, value)
+            else:
+                c.drawRightString(310, y + .2, value)
+
+    page = pdf_page(tmp_path, draw, pagesize=(400, 500))
+    layout = infer_page(page)
+    assert len(layout.alternatives) == 1
+    choice = layout.alternatives[0]
+    assert choice.scope_id == page.id
+    assert choice.reason == "aligned_label_value_rows"
+    columns, rows = choice.candidates
+    assert choice.default_index == 0
+    assert columns.name == "columns" and rows.name == "rows"
+    assert len(columns.region_ids) == len(rows.region_ids) == count * 2
+    assert set(columns.region_ids) == set(rows.region_ids)
+    assert columns.region_ids != rows.region_ids
+    assert region_text(page, layout, columns.region_ids) == "".join(a for a, _ in pairs) + "".join(b for _, b in pairs)
+    assert region_text(page, layout, rows.region_ids) == "".join(a + b for a, b in pairs)
+    start = layout.reading_order.index(columns.region_ids[0])
+    end = start + count * 2
+    assert layout.reading_order[start:end] == columns.region_ids
+    reordered = replace(layout, reading_order=layout.reading_order[:start] + rows.region_ids + layout.reading_order[end:])
+    expected = "".join(a + b for a, b in pairs)
+    assert text(page, reordered) == (heading + expected + footer if count > 4 else expected)
+    assert not layout.tables
+    assert infer_page(page) == layout
+    exactly_once(page, layout)
+    exactly_once(page, reordered)
+
+
+@pytest.mark.parametrize("pitch", [13, 28])
+def test_aligned_independent_prose_columns_stay_column_first(tmp_path, pitch):
+    left = ["The team followed the river upstream", "and noted several nesting sites along",
+            "the bank. Their survey ended where", "the path led past the old stone bridge."]
+    right = ["The second group began at the ridge", "and recorded changes in air pressure",
+             "before heading down the eastern slope", "to collect the instruments before dusk."]
+
+    def draw(c):
+        for j, (a, b) in enumerate(zip(left, right)):
+            y = 400 - pitch * j
+            c.drawString(35, y, a)
+            c.drawString(250, y, b)
+
+    page = pdf_page(tmp_path, draw, pagesize=(440, 500))
+    layout = infer_page(page)
+    assert not layout.alternatives
+    assert text(page, layout) == "".join(left + right)
+    exactly_once(page, layout)
+
+
+@pytest.mark.parametrize(("count", "pitch", "blank_labels"), [(4, 13, False), (17, 22, False), (4, 28, True)])
+def test_longer_row_alternatives_require_spaced_nonblank_entries_within_budget(tmp_path, count, pitch, blank_labels):
+    labels = [" " if blank_labels else f"Sample {j}" for j in range(count)]
+
+    def draw(c):
+        for j, label in enumerate(labels):
+            y = 400 - pitch * j
+            c.drawString(35, y, label)
+            c.drawString(250, y, f"{j} cm")
+
+    page = pdf_page(tmp_path, draw, pagesize=(400, 500))
+    layout = infer_page(page)
+    assert not layout.alternatives
+    assert text(page, layout) == "".join(labels) + "".join(f"{j} cm" for j in range(count))
     exactly_once(page, layout)
 
 

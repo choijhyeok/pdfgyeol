@@ -212,6 +212,7 @@ class _Item:
     bbox: BBox
     size: float = 0
     column_path: tuple[int, ...] = ()
+    has_text: bool = False
 
 
 @dataclass(frozen=True)
@@ -219,6 +220,7 @@ class _Choice:
     bbox: BBox
     columns: tuple[str, ...]
     rows: tuple[str, ...]
+    reason: str
 
 
 def _row_order(items: list[_Item], tolerance: float) -> list[_Item]:
@@ -232,6 +234,38 @@ def _row_order(items: list[_Item], tolerance: float) -> list[_Item]:
         row.append(item)
     result.extend(sorted(row, key=lambda i: (i.bbox.x0, i.id)))
     return result
+
+
+def _aligned_label_value_order(left: list[_Item], right: list[_Item], tolerance: float) -> list[_Item]:
+    """Look for a compact, spaced list with one entry per side on every row."""
+    if not 4 <= len(left) == len(right) <= 16 or not all(item.has_text for item in left + right):
+        return []
+    left = sorted(left, key=lambda item: item.bbox.top)
+    right = sorted(right, key=lambda item: item.bbox.top)
+    if any(abs(a.bbox.top - b.bbox.top) > tolerance for a, b in zip(left, right)):
+        return []
+
+    size = median(item.size for item in left + right)
+    # Check both row whitespace and horizontal compactness. Shared baselines alone
+    # are common in independent prose columns.
+    rows = list(zip(left, right))
+    for (a, b), (next_a, next_b) in zip(rows, rows[1:]):
+        clearance = min(next_a.bbox.top, next_b.bbox.top) - max(a.bbox.bottom, b.bbox.bottom)
+        if clearance < max(tolerance, size * .6):
+            return []
+
+    left_starts = [item.bbox.x0 for item in left]
+    right_starts = [item.bbox.x0 for item in right]
+    right_ends = [item.bbox.x1 for item in right]
+    anchor_tolerance = max(tolerance, size * .45)
+    if (max(left_starts) - min(left_starts) > anchor_tolerance
+            or min(max(right_starts) - min(right_starts), max(right_ends) - min(right_ends)) > anchor_tolerance):
+        return []
+
+    column_distance = median(right_starts) - median(left_starts)
+    if max(item.bbox.x1 - item.bbox.x0 for item in left + right) > column_distance * .65:
+        return []
+    return [item for pair in rows for item in pair]
 
 
 def _gutter(items: list[_Item], config: LayoutConfig) -> float | None:
@@ -279,15 +313,27 @@ def _order(items: list[_Item], config: LayoutConfig, choices: list[_Choice],
     result = []
 
     def band(a: list[_Item], b: list[_Item]) -> list[_Item]:
+        child_choices = len(choices)
         ordered = _order(a, config, choices, path + (0,)) + _order(b, config, choices, path + (1,))
+        if len(choices) != child_choices:
+            return ordered  # Keep nested candidate scopes disjoint.
+
+        row_order: list[_Item] = []
+        reason = "aligned_label_value_rows"
         # Sparse, aligned fragments can be independent columns or unruled rows.
         if 2 <= len(a) <= 3 and 2 <= len(b) <= 3 and all(i.size for i in a + b):
             aligned = sum(any(abs(i.bbox.top - j.bbox.top) <= config.line_tolerance for j in b) for i in a)
             if aligned >= 2:
                 row_order = _row_order(a + b, config.line_tolerance)
-                if [i.id for i in ordered] != [i.id for i in row_order]:
-                    choices.append(_Choice(_union(i.bbox for i in a + b),
-                                           tuple(i.id for i in ordered), tuple(i.id for i in row_order)))
+                reason = "sparse_aligned_blocks"
+        else:
+            row_order = _aligned_label_value_order(a, b, config.line_tolerance)
+
+        if row_order:
+            columns = tuple(i.id for i in ordered)
+            rows = tuple(i.id for i in row_order)
+            if columns != rows:
+                choices.append(_Choice(_union(i.bbox for i in a + b), columns, rows, reason))
         return ordered
 
     for separator in cross:
@@ -335,7 +381,8 @@ class _Builder:
                             tuple(f.id for f in group), median(f.style.size for f in group))
             self.lines.append(line)
             local_lines[line.id] = line
-            items.append(_Item(line.id, line.bbox, line.font_size))
+            items.append(_Item(line.id, line.bbox, line.font_size,
+                               has_text=any(fragment.text.strip() for fragment in group)))
         for index, grid in enumerate(self.grids):
             if grid.parent_cell == owner:
                 table = self.build_table(index)
@@ -382,7 +429,7 @@ class _Builder:
         for choice in choices:
             self.alternatives.append(ReadingAlternative(
                 f"{self.page.id}:a{len(self.alternatives):05d}", scope_id, choice.bbox,
-                "sparse_aligned_blocks", (
+                choice.reason, (
                     ReadingCandidate("columns", tuple(mapping[i] for i in choice.columns)),
                     ReadingCandidate("rows", tuple(mapping[i] for i in choice.rows)),
                 ),
