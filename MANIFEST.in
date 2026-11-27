@@ -1,4 +1,5 @@
 include assets/otter.png
+include README.en.md
 include examples/make_riverside_notes.py
 include docs/extraction.md
 include docs/layout.md
@@ -11,6 +12,7 @@ include docs/benchmarks-insurance.md
 include docs/benchmarks-tables.md
 include docs/parser-flow.html
 include docs/parser-flow.png
+include docs/parser-flow.en.png
 include tools/benchmark_order.py
 include tools/benchmark_tables.py
 include tools/reading_order_cases.json

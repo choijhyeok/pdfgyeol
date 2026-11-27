@@ -1,12 +1,14 @@
+**여러 단으로 나뉜 PDF 본문을 읽는 순서대로 추출하고, 표의 각 셀을 원문 위치와 대조하려면 PDF결을 쓰세요.**
+
+**한국어** · [English](README.en.md)
+
 <p align="center">
   <img src="assets/otter.png" width="190" alt="물에 누워 두 단짜리 문서의 읽기 순서를 앞발로 따라가는 수달">
 </p>
 
 <h1 align="center">PDF결</h1>
 
-<p align="center">PDF의 읽기 순서와 표 구조를 복원하는 Python 도구</p>
-
-PDF결(`pdfgyeol`)은 PDF의 글자 위치를 바탕으로 제목, 여러 단의 본문, 표를 구분합니다. 읽는 순서대로 텍스트를 얻거나, 글자 좌표와 표 셀까지 담은 UTF-8 JSON으로 내보낼 수 있습니다. 설치 후 기본 파싱은 API 키와 네트워크 없이 실행됩니다.
+PDF결(`pdfgyeol`)은 Python API와 CLI로 사용할 수 있습니다. 읽기 순서에 맞춘 텍스트와 글자 좌표·표 셀을 담은 UTF-8 JSON을 제공합니다. 설치 후 기본 파싱은 오프라인에서 실행됩니다.
 
 ## 주요 기능
 
@@ -16,9 +18,9 @@ PDF결(`pdfgyeol`)은 PDF의 글자 위치를 바탕으로 제목, 여러 단의
 
 ## 파서 동작 방식
 
-[![PDF결이 원문 좌표에서 영역과 표를 복원하고 선택적으로 Decision을 적용하는 과정](docs/parser-flow.png)](docs/parser-flow.html)
+<a href="docs/parser-flow.png"><img src="docs/parser-flow.png" width="504" alt="PDF 글자와 좌표 추출 → 단·표 복원 → 읽기 순서 확정 → 텍스트·JSON 출력. 모호한 영역에는 선택적으로 Decision을 적용합니다."></a>
 
-글자와 좌표에서 먼저 페이지 안의 단·표·읽기 순서를 구합니다. Decision을 켠 경우에는 순서가 모호한 영역에 한해 후보를 비교합니다. 보험 약관 주석은 최종 읽기 순서가 정해진 뒤 붙습니다. 단계별 입력과 출력을 살펴보려면 HTML 파일을 내려받아 브라우저에서 여세요. [대화형 동작도](docs/parser-flow.html)
+단계별 입력과 출력은 대화형 동작도에서 살펴볼 수 있습니다. HTML 파일을 내려받아 브라우저에서 여세요. [대화형 동작도](docs/parser-flow.html)
 
 ## 실제 PDF에서 비교한 결과
 
