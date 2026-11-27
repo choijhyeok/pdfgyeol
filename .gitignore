@@ -6,3 +6,6 @@ __pycache__/
 build/
 dist/
 .mypy_cache/
+/target/
+/src/pdfgyeol/_native*.so
+/src/pdfgyeol/_native*.pyd
