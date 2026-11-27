@@ -1,2 +1,3 @@
 include docs/extraction.md
+include docs/layout.md
 include tools/smoke_extraction.py
