@@ -5,8 +5,18 @@ from enum import Enum
 from typing import Literal
 
 Point = tuple[float, float]
-Color = tuple[float, ...] | None
 VectorKind = Literal["line", "rect", "curve"]
+
+
+@dataclass(frozen=True, slots=True)
+class PatternColor:
+    """PDF pattern resource name and any base color components exposed by the parser."""
+
+    name: str
+    base_components: tuple[float, ...] | None = None
+
+
+Color = tuple[float, ...] | PatternColor | None
 
 
 @dataclass(frozen=True, slots=True)

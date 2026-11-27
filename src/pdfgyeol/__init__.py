@@ -20,6 +20,7 @@ from .models import (
     Page,
     PageKind,
     PathSegment,
+    PatternColor,
     TextFragment,
     TextStyle,
     VectorEvidence,
@@ -32,7 +33,7 @@ model: str | None = None
 
 __all__ = [
     "PARSE_SCHEMA_VERSION", "ParsedDocument", "ParsedPage", "parse_pdf",
-    "BBox", "Document", "ImageEvidence", "Page", "PageKind", "PathSegment",
+    "BBox", "Document", "ImageEvidence", "Page", "PageKind", "PathSegment", "PatternColor",
     "TextFragment", "TextStyle", "VectorEvidence", "extract_pdf",
     "LayoutConfig", "PageLayout", "ReadingAlternative", "ReadingCandidate", "Region",
     "Table", "TableCell", "TableRow", "TextLine", "infer_page", "iter_layout",

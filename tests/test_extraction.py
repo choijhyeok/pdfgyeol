@@ -2,6 +2,7 @@
 
 from hashlib import sha256
 from io import BytesIO
+from json import loads
 
 import pdfplumber
 import pytest
@@ -9,7 +10,8 @@ from PIL import Image
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen.canvas import Canvas
 
-from pdfgyeol import PageKind, extract_pdf
+from pdfgyeol import PageKind, PatternColor, extract_pdf, parse_pdf
+from pdfgyeol.extraction import _color
 
 
 @pytest.fixture
@@ -143,18 +145,11 @@ def test_blank_image_only_vector_only_and_mixed_pages(garden_pdf):
     assert "".join(f.text for f in pages[4].fragments) == "Lab scan with caption"
 
 
-def offset_pdf(path, rotation):
-    """Hand-built original PDF: offset MediaBox, smaller CropBox, text + line."""
-    content = b"BT /F1 12 Tf 50 80 Td (Botany) Tj ET 40 60 m 140 60 l S"
-    objects = [
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        (f"<< /Type /Page /Parent 2 0 R /MediaBox [20 30 320 230] "
-         f"/CropBox [40 50 280 210] /Rotate {rotation} "
-         f"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>").encode(),
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"\nendstream",
-    ]
+def pdf_stream(content, attributes=b""):
+    return b"<< /Length %d %s >>\nstream\n%s\nendstream" % (len(content), attributes, content)
+
+
+def write_pdf(path, objects):
     pdf = BytesIO(b"%PDF-1.4\n")
     pdf.seek(0, 2)
     offsets = []
@@ -162,11 +157,76 @@ def offset_pdf(path, rotation):
         offsets.append(pdf.tell())
         pdf.write(f"{number} 0 obj\n".encode() + obj + b"\nendobj\n")
     xref = pdf.tell()
-    pdf.write(b"xref\n0 6\n0000000000 65535 f \n")
+    size = len(objects) + 1
+    pdf.write(f"xref\n0 {size}\n0000000000 65535 f \n".encode())
     for offset in offsets:
         pdf.write(f"{offset:010d} 00000 n \n".encode())
-    pdf.write(f"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode())
+    pdf.write(f"trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode())
     path.write_bytes(pdf.getvalue())
+
+
+def offset_pdf(path, rotation):
+    """Hand-built original PDF: offset MediaBox, smaller CropBox, text + line."""
+    write_pdf(path, [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (f"<< /Type /Page /Parent 2 0 R /MediaBox [20 30 320 230] "
+         f"/CropBox [40 50 280 210] /Rotate {rotation} "
+         f"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>").encode(),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        pdf_stream(b"BT /F1 12 Tf 50 80 Td (Botany) Tj ET 40 60 m 140 60 l S"),
+    ])
+
+
+def test_pattern_colors_survive_parsing_and_json(tmp_path):
+    path = tmp_path / "patterns.pdf"
+    tiling = (b"/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 "
+              b"/BBox [0 0 4 4] /XStep 4 /YStep 4 /Resources << >>")
+    write_pdf(path, [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] "
+         b"/Resources << /Font << /F1 4 0 R >> "
+         b"/Pattern << /Hatch 6 0 R /Gradient 7 0 R >> >> /Contents 5 0 R >>"),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        pdf_stream(
+            b"/Pattern CS /Hatch SCN /Pattern cs /Gradient scn\n"
+            b"BT /F1 12 Tf 2 Tr 20 80 Td (A) Tj ET 20 20 30 20 re B\n"
+            b"0.4 G 0.1 0.2 0.3 rg\n"
+            b"BT /F1 12 Tf 2 Tr 70 80 Td (B) Tj ET 70 20 30 20 re B"
+        ),
+        pdf_stream(b"0 G 0 0 m 4 4 l S", tiling),
+        (b"<< /Type /Pattern /PatternType 2 "
+         b"/Shading << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 100 0] "
+         b"/Function << /FunctionType 2 /Domain [0 1] /C0 [0 0 0] /C1 [0 0 1] /N 1 >> "
+         b"/Extend [true true] >> >>"),
+    ])
+
+    document = parse_pdf(path)
+    assert document.text.split() == ["A", "B"]
+    page = document.pages[0].source
+    for record in (page.fragments[0].style, page.vectors[0]):
+        assert record.stroking_color == PatternColor("Hatch")
+        assert record.non_stroking_color == PatternColor("Gradient")
+
+    source = loads(document.to_json())["pages"][0]["source"]
+    pattern_fragment, solid_fragment = source["fragments"]
+    pattern_vector, solid_vector = source["vectors"]
+    for record in (pattern_fragment["style"], pattern_vector):
+        assert record["stroking_color"] == {"name": "Hatch", "base_components": None}
+        assert record["non_stroking_color"] == {"name": "Gradient", "base_components": None}
+    for record in (solid_fragment["style"], solid_vector):
+        assert record["stroking_color"] == [0.4]
+        assert record["non_stroking_color"] == [0.1, 0.2, 0.3]
+
+
+@pytest.mark.parametrize(("base_color", "components"), [
+    (0.4, (0.4,)),
+    ((0.1, 0.2, 0.3), (0.1, 0.2, 0.3)),
+    ((0.1, 0.2, 0.3, 0.4), (0.1, 0.2, 0.3, 0.4)),
+])
+def test_uncolored_pattern_color_retains_base_components(base_color, components):
+    assert _color((base_color, "Tint")) == PatternColor("Tint", components)
 
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])

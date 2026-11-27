@@ -26,6 +26,7 @@ assert document.to_dict()["schema_version"] == "pdfgyeol.parse/1"
 
 - 최상위 `schema_version`은 `pdfgyeol.parse/1`입니다. `id`, `sha256`, `source_schema_version`, `extractor_version`은 원문과 추출 버전을 식별합니다. `pages`는 파일의 페이지 순서입니다.
 - `pages[].source`는 페이지 ID·번호·크기·회전·종류·`source_bbox`와 원문 `fragments`, `vectors`, `images`를 담습니다. `source_bbox`는 pdfplumber의 원래 페이지 상자입니다. 글자·영역·표·셀의 `bbox`는 회전된 MediaBox 좌상단에서 시작하는 PDF 포인트 좌표이며 키는 `x0`, `top`, `x1`, `bottom`입니다. 글자의 `text`와 원래 순번은 그대로 보존됩니다.
+- 글자와 벡터의 `stroking_color`, `non_stroking_color`는 숫자 배열, 패턴 객체 또는 `null`입니다. 패턴 객체의 `name`은 PDF 리소스 이름이며, `base_components`는 파서가 제공한 기본 색상 성분 배열 또는 `null`입니다.
 - `pages[].layout.reading_order`는 페이지 최상위 영역 ID 순서입니다. 일반 영역은 `line_ids`를, 표 영역은 `table_id`를 참조합니다. 표는 `rows[].cells[]`의 행·열·병합 범위와 각 셀의 `region_ids`를 보존합니다. 셀에서 같은 순회 규칙을 반복하면 중첩 표도 읽을 수 있습니다. 각 줄의 `fragment_ids`는 원문 문자 조각을 참조합니다. `page.ordered_fragments()`로 이 순서의 원문 조각을 얻습니다.
 - `pages[].text`는 읽기 순서의 표시용 원문입니다. 줄마다 줄바꿈을 넣고, 수평 글자가 3포인트 넘게 떨어진 곳에 원문 공백이 없으면 공백을 보탭니다. `page.region_text(region_id)`와 `page.cell_text(cell_id)`는 이 규칙을 해당 영역과 셀에 적용합니다. 잘못된 ID는 `KeyError`입니다. 빈 페이지·빈 셀의 텍스트는 빈 문자열이며 `document.text`는 페이지를 `\n\f\n`으로 연결합니다.
 

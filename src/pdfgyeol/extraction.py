@@ -9,7 +9,7 @@ import pdfplumber
 from pdfplumber.page import Page as PDFPage
 
 from .models import (
-    BBox, Color, Document, ImageEvidence, Page, PageKind, PathSegment,
+    BBox, Color, Document, ImageEvidence, Page, PageKind, PathSegment, PatternColor,
     TextFragment, TextStyle, VectorEvidence, VectorKind,
 )
 
@@ -17,9 +17,24 @@ from .models import (
 def _color(value: Any) -> Color:
     if value is None:
         return None
+    if isinstance(value, str):
+        return PatternColor(value)
+
+    pattern_name: str | None = None
+    if isinstance(value, (tuple, list)):
+        # pdfplumber wraps a character's pattern name in a one-element tuple.
+        if len(value) == 1 and isinstance(value[0], str):
+            return PatternColor(value[0])
+        if (len(value) == 2 and isinstance(value[1], str)
+                and isinstance(value[0], (int, float, tuple, list))):
+            value, pattern_name = value
+
+    components: tuple[float, ...]
     if isinstance(value, (int, float)):
-        return (float(value),)
-    return tuple(float(component) for component in value)
+        components = (float(value),)
+    else:
+        components = tuple(float(component) for component in value)
+    return PatternColor(pattern_name, components) if pattern_name is not None else components
 
 
 def _bbox(obj: dict[str, Any], origin: tuple[float, float]) -> BBox:

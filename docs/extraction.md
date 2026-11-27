@@ -30,7 +30,7 @@ for page in document.pages:
 
 - `BBox(x0, top, x1, bottom)`와 벡터의 `points`·`path`는 페이지 **회전을 적용한 MediaBox 왼쪽 위를 (0, 0)**으로 삼는다. x는 오른쪽, y는 아래쪽으로 증가한다. 단위는 PDF point(통상 1/72 inch), 반올림하지 않는다. `width`, `height`도 같은 공간이다. 표준 `/UserUnit=1`을 전제로 하며 비표준 UserUnit의 실제 인치 크기는 정규화하지 않는다.
 - CropBox로 자르지 않는다. MediaBox 밖의 원문도 버리지 않아 음수나 페이지 크기를 넘는 좌표가 가능하다. `source_bbox`는 이동 전 pdfplumber 페이지 상자이며 `rotation`은 원문의 회전 각도다. 회전 0/90/180/270도와 0이 아닌 MediaBox 원점을 합성 PDF로 검사한다.
-- 글꼴 이름·크기·upright·stroke/fill 색상과 advance를 보존한다. 색상은 원문의 성분 tuple이며 RGB로 변환하지 않는다. 폰트 크기는 pdfplumber의 `size`로 회전/변환 시 원래 `Tf` 값과 다를 수 있다. 글자 상자는 글리프의 실제 잉크 경계가 아니라 파서가 계산한 상자다.
+- 글꼴 이름·크기·upright·stroke/fill 색상과 advance를 보존한다. 숫자 색상은 원문의 성분 tuple로 보존한다. 패턴 색상은 PDF 리소스 이름과 파서가 제공한 경우에 한해 기본 색상 성분을 `PatternColor(name, base_components)`에 담는다. 패턴과 그라데이션의 픽셀 색상 계산은 렌더러의 역할이다. 폰트 크기는 pdfplumber의 `size`로 회전/변환 시 원래 `Tf` 값과 다를 수 있다. 글자 상자는 글리프의 실제 잉크 경계가 아니라 파서가 계산한 상자다.
 - `source_matrix`만 예외다. pdfminer가 제공한 원본 CTM이며 위의 top-left 좌표로 이동/반전하지 않는다. 글리프 방향 등 원문 변환의 증거로 사용하고 `bbox`와 직접 혼합하지 않는다.
 
 ## 표·이미지와 페이지 상태
