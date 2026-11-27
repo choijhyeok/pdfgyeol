@@ -57,6 +57,8 @@ python -m pip install .
 
 On Windows, you can create the virtual environment with `py -3 -m venv .venv`. Installation requires access to download build and runtime dependencies.
 
+The default source install uses Python. To build the optional accelerator with Rust and Cargo on CPython, run `PDFGYEOL_BUILD_RUST=1 python -m pip install .`. In PowerShell, set `$env:PDFGYEOL_BUILD_RUST = '1'` before running the installation command. Compatible native wheels install without Rust.
+
 ## Quick start
 
 ### Save JSON with the CLI
