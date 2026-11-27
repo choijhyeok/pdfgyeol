@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdfgyeol"
+version = "0.1.0"
+description = "Typed, source-preserving PDF extraction for layout analysis"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = ["pdfplumber>=0.11.11,<0.12"]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "reportlab>=4"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pdfgyeol = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

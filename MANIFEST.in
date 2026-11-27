@@ -1,0 +1,2 @@
+include docs/extraction.md
+include tools/smoke_extraction.py
