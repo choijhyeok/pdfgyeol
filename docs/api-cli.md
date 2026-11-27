@@ -1,4 +1,4 @@
-# 기능 4. Python API와 CLI
+# Python API와 CLI
 
 저장소 루트에서 설치한 뒤 `input.pdf`를 읽습니다. Python 3.11 이상이 필요합니다. 현재 `pdfplumber` 의존성이 요구하는 Pillow 13의 최소 버전입니다. [Pillow 13 패키지 정보](https://pypi.org/project/pillow/13.0.0/)
 

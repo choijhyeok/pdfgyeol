@@ -1,6 +1,6 @@
-# 기능 1: 원문 추출 계약
+# PDF 원문 추출
 
-이 문서는 원문 증거 추출 계약이다. 로컬 영역·읽기 순서·표 셀 추론은 [기능 2](layout.md)에 설명하며 Decision은 후속 기능이다. 패키지 버전 `0.1.0`은 저장소에서 빌드하는 개발 버전이며 공개 배포를 뜻하지 않는다.
+`extract_pdf`는 원문 글자·벡터·이미지의 위치를 읽는다. 읽기 순서와 표 셀은 [레이아웃 추론](layout.md)에서, 모호한 순서 후보는 선택 기능인 [Decision](decision.md)에서 처리한다. 패키지 버전 `0.1.0`은 저장소에서 빌드하는 개발 버전이며 공개 배포를 뜻하지 않는다.
 
 ```sh
 python3 -m venv .venv
@@ -35,7 +35,7 @@ for page in document.pages:
 
 ## 표·이미지와 페이지 상태
 
-- 벡터는 `line`, `rect`, `curve` 원문 객체를 한 번씩 보존한다. 벡터 목록은 종류별 line → rect → curve 순서이며 PDF 페인트 순서가 아니다. 선 두께, stroke/fill, even-odd, 색상, dash, 꼭짓점과 Bézier 제어점을 포함한 path를 제공한다. `page.edges`나 추정 표를 함께 넣지 않아 사각형의 변을 다시 세지 않는다. 표 행·셀·텍스트 귀속은 후속 기능이다.
+- 벡터는 `line`, `rect`, `curve` 원문 객체를 한 번씩 보존한다. 벡터 목록은 종류별 line → rect → curve 순서이며 PDF 페인트 순서가 아니다. 선 두께, stroke/fill, even-odd, 색상, dash, 꼭짓점과 Bézier 제어점을 포함한 path를 제공한다. `page.edges`나 추정 표를 함께 넣지 않아 사각형의 변을 다시 세지 않는다. 표의 행·셀과 텍스트 귀속은 [레이아웃 추론](layout.md)에서 처리한다.
 - 이미지는 배치 상자, 원본 픽셀 크기, bits, mask 여부만 보존한다. 이미지 바이트를 복사하거나 OCR하지 않는다.
 - `text`: 원문 글리프가 하나 이상. 이미지·벡터도 함께 있을 수 있다. 공백 글리프나 숨은 OCR 텍스트도 글리프로 센다.
 - `image_only`: 글리프 없이 이미지가 하나 이상. 벡터 장식이 함께 있을 수 있다. OCR 필요 여부를 판정한 결과는 아니다.
@@ -50,7 +50,7 @@ for page in document.pages:
 외부 문서는 경로만 전달해 제자리에서 검사한다. 스모크 도구는 두 번의 전체 추출 일치, 원문 글리프 순서와 개수, 벡터·이미지 개수, ID 유일성을 확인하고 통계만 출력한다. 이 검사는 파서 대응 확인이며 읽기 순서·표 셀 정확도 평가는 아니다.
 
 ```sh
-.venv/bin/python tools/smoke_extraction.py /absolute/path/to/document.pdf
+.venv/bin/python tools/smoke_extraction.py notes.pdf
 .venv/bin/python -m pip install build
 .venv/bin/python -m build
 ```

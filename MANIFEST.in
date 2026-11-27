@@ -1,3 +1,5 @@
+include assets/otter.png
+include examples/make_riverside_notes.py
 include docs/extraction.md
 include docs/layout.md
 include docs/api-cli.md

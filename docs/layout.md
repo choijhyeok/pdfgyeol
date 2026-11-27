@@ -1,4 +1,4 @@
-# 기능 2: 로컬 영역·읽기 순서
+# 페이지 영역과 읽기 순서
 
 ```python
 from pdfgyeol import extract_pdf, infer_page, iter_layout
@@ -13,11 +13,11 @@ for page, layout in zip(document.pages, iter_layout(document.pages)):
 first_page_layout = infer_page(document.pages[0])
 ```
 
-패키지 의존성 추가 없이 기능 1의 `Page`만 받는다. 보험 용어·문서 이름·페이지 번호를 사용하는 규칙, OCR, CLI, 모델·네트워크 호출은 없다. `extract_pdf`는 여전히 전체 원문을 메모리에 보관한다. `infer_page`와 지연 iterator `iter_layout`은 페이지 사이 상태나 캐시를 유지하지 않으며 이미 준비한 원문 페이지를 하나씩 처리할 수 있다.
+레이아웃 추론에는 `extract_pdf`가 반환한 `Page`를 사용한다. 단과 표는 페이지의 글자·벡터 배치만으로 추론한다. `extract_pdf`는 전체 원문을 메모리에 보관한다. `infer_page`와 `iter_layout`은 준비된 원문 페이지를 하나씩 처리하며 페이지 사이 상태나 캐시를 유지하지 않는다.
 
 ## 결과와 원문 소유권
 
-`PageLayout`은 불변 타입이며 `page_id`, `lines`, `regions`, `tables`, `reading_order`, `alternatives`, `warnings`를 제공한다. 원문 텍스트와 개별 글자 좌표는 수정하거나 복사하지 않고 기능 1의 ID로 참조한다. 파생 상자도 기능 1과 같은 회전 적용 MediaBox의 왼쪽 위 원점, x 오른쪽·y 아래쪽, PDF point 좌표다.
+`PageLayout`은 불변 타입이며 `page_id`, `lines`, `regions`, `tables`, `reading_order`, `alternatives`, `warnings`를 제공한다. 원문 텍스트와 개별 글자 좌표는 [추출한 원문 ID](extraction.md#원문과-id)로 참조한다. 새로 계산한 상자도 회전을 적용한 MediaBox의 왼쪽 위를 원점으로 하고 x는 오른쪽, y는 아래쪽으로 증가한다. 단위는 PDF point다.
 
 - `TextLine.fragment_ids`: 기하적으로 묶은 글리프. 공백·겹쳐 찍힌 글리프·0폭 글리프도 소유한다. 정렬은 x 좌표와 원문 인덱스 순서다. 원문의 숨은 텍스트나 오버프린트를 제거하지 않는다.
 - 텍스트 `Region.line_ids`: 줄을 이어 묶은 영역. 큰 글꼴은 `heading`, 일반 줄 묶음은 `text`다. 단은 `column_path`로 표시하며 재귀 분할의 왼쪽 0·오른쪽 1이다. 전폭 구분선 사이의 국소 단 소속을 뜻하며 문서 전체의 영구 단 번호는 아니다.
@@ -44,7 +44,7 @@ first_page_layout = infer_page(document.pages[0])
 
 두 경우 모두 기본 `columns`와 대안 `rows`를 결정적으로 기록한다. 각 후보의 `region_ids`는 같은 원문 영역의 서로 다른 순열이며 텍스트를 복제하지 않는다. 후보에 포함된 줄은 영역으로 합치지 않아 순서를 독립적으로 바꿀 수 있다.
 
-`scope_id`는 페이지 또는 표 셀 ID이며, 후보는 그 범위의 정규 순서에 있는 연속 부분 구간을 교체하기 위한 것이다. 기본 순서는 `default_index=0`이다. `infer_page`는 후보를 생성하고 기본 순서만 반환한다. 선택·보류·명시적 모델 호출은 기능 3의 [`resolve_page`](decision.md)에서 처리한다. 모든 모호함을 탐지한다는 보장은 없다.
+`scope_id`는 페이지 또는 표 셀 ID이며, 후보는 그 범위의 정규 순서에 있는 연속 부분 구간을 교체하기 위한 것이다. `infer_page` 결과에는 대안 후보와 기본 순서(`default_index=0`)가 담긴다. 선택·보류·명시적 모델 호출은 [`resolve_page`](decision.md)에서 처리한다. 모든 모호함을 탐지한다는 보장은 없다.
 
 ## 검증과 한계
 

@@ -1,4 +1,4 @@
-# 기능 3: 선택형 Decision 판정
+# 선택 기능 Decision
 
 ```python
 from pdfgyeol import DecisionConfig, extract_pdf, infer_page, resolve_page
@@ -17,7 +17,7 @@ for decision in result.decisions:
 ordered_source_ids = result.layout.ordered_fragment_ids()
 ```
 
-`resolve_page`는 기능 2의 원본 기하 결과를 받아 새 `DecisionResult(layout, decisions)`를 반환한다. `layout`을 생략하면 내부에서 `infer_page(page)`를 실행한다. 입력 `Page`·`PageLayout`은 불변이며 원문 텍스트를 모델 응답으로 교체하지 않는다. 기능 2 자체와 `iter_layout`은 계속 로컬에서만 동작한다.
+`resolve_page`는 기하 규칙이 만든 레이아웃을 받아 새 `DecisionResult(layout, decisions)`를 반환한다. `layout`을 생략하면 내부에서 `infer_page(page)`를 실행한다. 입력 `Page`·`PageLayout`은 불변이며 모델 응답은 순서 후보를 고르는 데만 사용한다. `infer_page`와 `iter_layout`은 로컬에서 동작한다.
 
 ## 명시적 설정과 전송 범위
 
@@ -82,7 +82,7 @@ python tools/decision_live_probe.py --env-file /authorized/path/.env --run-live 
 
 이 검증 도구는 직접 만든 비민감 PDF만 사용하고 키·URL·응답·원문 발췌 대신 집계 결과만 출력한다. 선택된 `.env`의 세 설정만 메모리에서 읽고 복사하거나 저장하지 않는다. 4·8행 측정 목록, 짧은 독립 본문 단, 중첩 표 셀, 무후보 대조군의 정답과 후보 생성을 호출 전에 확인한다. 실제 결과와 제한은 [검증 기록](decision-validation.md)에 있다.
 
-별도 신규 평가의 예제·정답·분할·판정 기준은 [`decision_evaluation_protocol.json`](../tools/decision_evaluation_protocol.json)에 고정되어 있다. 행별 목록·독립 본문·저증거 각 4개를 개발 6개와 holdout 6개로 균등 분할한다. 저증거는 순서 추측 대신 보류를 정답으로 검사한다. 다음 첫 명령은 네트워크 없이 12개 후보·정답을 확인하고 고정 입력의 해시를 출력한다. 두 번째 명령은 해당 해시가 같을 때만 실행하며 각 항목당 한 번, 최대 12번 요청한다. 두 정책은 메모리의 같은 응답을 재사용한다. 개발 판정은 holdout 호출 전에 확정하고, holdout은 한 번만 평가한다.
+별도 신규 평가의 예제·정답·분할·판정 기준은 [`decision_evaluation_protocol.json`](../tools/decision_evaluation_protocol.json)에 고정되어 있다. 행별 목록·독립 본문·저증거 각 4개를 개발 6개와 holdout 6개로 균등 분할한다. 저증거는 순서 추측 대신 보류를 정답으로 검사한다. 다음 첫 명령은 네트워크 없이 12개 후보·정답을 확인하고 평가 정의·도구·Decision·레이아웃 코드의 해시를 출력한다. 두 번째 명령은 해당 해시가 일치할 때만 실행하며 각 항목당 한 번, 최대 12번 요청한다. 두 정책은 메모리의 같은 응답을 재사용한다. 개발 판정은 holdout 호출 전에 확정하고, holdout은 한 번만 평가한다.
 
 ```sh
 python tools/decision_evaluation.py
@@ -91,4 +91,4 @@ python tools/decision_evaluation.py --run-live --env-file /authorized/path/.env 
 
 신규 도구 보고서는 항목 ID·클래스·점수 쌍·선택·사유와 클래스별 집계만 기록한다. 키·URL·설정 파일 경로·발췌·원시 응답·실행 세션은 저장하지 않는다. 직접 생성한 예제는 공개 정의로 재현하며 임시 PDF는 실행 후 제거한다. 이 소규모 합성 평가만으로 기본값 변경이나 실제 문서의 정확도를 주장하지 않는다.
 
-후보 탐지는 기능 2의 범위다. 기존 후보가 없거나 올바른 순열이 후보에 없으면 Decision이 복구할 수 없다. 잘린 발췌와 문맥 생략으로 잘못 선택할 수 있다. 외부 제공자는 활성 발췌를 수신하므로 사용자가 전송을 허용한 문서에만 켜야 한다. 문서 전역 의미, OCR, 표 셀 재귀속, 보험 규칙, CLI는 이 기능에서 추가하지 않는다.
+후보는 [레이아웃 규칙](layout.md#국소-대안)이 찾는다. 기존 후보가 없거나 올바른 순열이 후보에 없으면 Decision이 복구할 수 없다. 잘린 발췌와 문맥 생략으로 잘못 선택할 수 있다. 외부 제공자는 활성 발췌를 수신하므로 사용자가 전송을 허용한 문서에만 켜야 한다.
