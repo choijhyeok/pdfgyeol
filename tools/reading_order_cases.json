@@ -1,0 +1,82 @@
+{
+  "cdc": {
+    "url": "https://www.cdc.gov/vaccines/hcp/current-vis/downloads/flu.pdf",
+    "sha256": "09156622c68fd0f054516a35da4d5d4d27747b624bc4dcce96e64b2de9e1fc9e",
+    "pages": {
+      "1": [
+        "Why get vaccinated?",
+        "In an average year",
+        "2. Influenza vaccines",
+        "does not cause flu",
+        "Your health care provider can give"
+      ],
+      "2": [
+        "Risks of a vaccine reaction",
+        "People sometimes faint",
+        "What if there is a serious problem?",
+        "6. The National",
+        "How can I learn more?"
+      ]
+    }
+  },
+  "w9": {
+    "url": "https://www.irs.gov/pub/irs-pdf/fw9.pdf",
+    "sha256": "2d420cbb4123dcf1fb82595b2359cfbb5d81f00b9df9d359fcc7af361d093f53",
+    "pages": {
+      "1": [
+        "Before you begin.",
+        "City, state, and ZIP code",
+        "Under penalties of perjury",
+        "General Instructions",
+        "An individual or entity"
+      ],
+      "2": [
+        "Form 1099-INT",
+        "By signing the filled-out form, you:",
+        "Definition of a U.S. person.",
+        "Foreign person. If you",
+        "What is backup withholding?"
+      ]
+    }
+  },
+  "attention": {
+    "url": "https://arxiv.org/pdf/1706.03762",
+    "sha256": "bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697",
+    "pages": {
+      "2": [
+        "1 Introduction",
+        "Recurrent models typically",
+        "2 Background",
+        "End-to-end memory networks",
+        "3 Model Architecture"
+      ],
+      "3": [
+        "Figure 1:",
+        "3.1 Encoder",
+        "Encoder:",
+        "Decoder:",
+        "3.2 Attention"
+      ]
+    }
+  },
+  "quake": {
+    "url": "https://www.djjunggu.go.kr/thumbnail/dwld/kr/sub060610.pdf",
+    "sha256": "d8b43dd237ee34b733c5b967e233dac9f95297b038934162c437f92ab8770ed0",
+    "pages": {
+      "5": [
+        "낙하물이 없는 넓은 공간으로",
+        "대피 장소에서는 안내에 따라 질서를",
+        "지진정보 확인 방법",
+        "대피 시 주의 사항",
+        "실내에서의 단계별 지진 행동요령"
+      ],
+      "7": [
+        "극장·경기장에 있을 때",
+        "엘리베이터를 타고 있을 때",
+        "자동차를 타고 있을 때",
+        "전철을 타고 있을 때",
+        "산이나 바다에 있을 때"
+      ]
+    }
+  }
+}
