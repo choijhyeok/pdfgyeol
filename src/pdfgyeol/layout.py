@@ -213,6 +213,12 @@ class _Item:
     size: float = 0
     column_path: tuple[int, ...] = ()
     has_text: bool = False
+    fragments: tuple[TextFragment, ...] = ()
+
+
+def _text_item(id: str, fragments: tuple[TextFragment, ...]) -> _Item:
+    return _Item(id, _union(f.bbox for f in fragments), median(f.style.size for f in fragments),
+                 has_text=any(f.text.strip() for f in fragments), fragments=fragments)
 
 
 @dataclass(frozen=True)
@@ -302,6 +308,35 @@ def _gutter(items: list[_Item], config: LayoutConfig) -> float | None:
     return None if best is None else best_x
 
 
+def _split_gutter_line(item: _Item, x: float, left: list[_Item], right: list[_Item],
+                       tolerance: float) -> tuple[_Item, _Item] | None:
+    """Recover two runs when a narrow gutter was missed by baseline grouping."""
+    fragments = item.fragments
+    if not fragments or not fragments[0].style.upright:
+        return None
+    cut = next((i for i, f in enumerate(fragments) if f.bbox.x0 >= x), len(fragments))
+    if not 0 < cut < len(fragments):
+        return None
+    left_end = max(f.bbox.x1 for f in fragments[:cut])
+    if left_end > x or fragments[cut].bbox.x0 - left_end < max(8, item.size):
+        return None
+
+    # Both runs must continue nearby, similarly sized and aligned column text.
+    # A gap alone is also possible in a spanning heading or a justified line.
+    parts = (_text_item(f"{item.id}:0", fragments[:cut]), _text_item(f"{item.id}:1", fragments[cut:]))
+    for part, side in zip(parts, (left, right)):
+        if not part.has_text:
+            return None
+        offsets = [neighbor.bbox.top - part.bbox.top for neighbor in side
+                   if neighbor.has_text and neighbor.fragments[0].style.upright
+                   and abs(neighbor.bbox.x0 - part.bbox.x0) <= tolerance
+                   and abs(neighbor.size - part.size) <= max(1, part.size * .12)
+                   and abs(neighbor.bbox.top - part.bbox.top) <= part.size * 2.5]
+        if not offsets or min(offsets) >= -tolerance or max(offsets) <= tolerance:
+            return None
+    return parts
+
+
 def _order(items: list[_Item], config: LayoutConfig, choices: list[_Choice],
            path: tuple[int, ...] = ()) -> list[_Item]:
     x = _gutter(items, config)
@@ -310,6 +345,15 @@ def _order(items: list[_Item], config: LayoutConfig, choices: list[_Choice],
     left = [item for item in items if item.bbox.x1 <= x]
     right = [item for item in items if item.bbox.x0 >= x]
     cross = sorted((item for item in items if item.bbox.x0 < x < item.bbox.x1), key=lambda i: (i.bbox.top, i.id))
+    # Use established lines as evidence before adding any recovered runs.
+    splits = [_split_gutter_line(item, x, left, right, config.line_tolerance) for item in cross]
+    separators = []
+    for item, parts in zip(cross, splits):
+        if parts is None:
+            separators.append(item)
+        else:
+            left.append(parts[0])
+            right.append(parts[1])
     result = []
 
     def band(a: list[_Item], b: list[_Item]) -> list[_Item]:
@@ -336,7 +380,7 @@ def _order(items: list[_Item], config: LayoutConfig, choices: list[_Choice],
                 choices.append(_Choice(_union(i.bbox for i in a + b), columns, rows, reason))
         return ordered
 
-    for separator in cross:
+    for separator in separators:
         before_left = [i for i in left if (i.bbox.top + i.bbox.bottom) / 2 < separator.bbox.top]
         before_right = [i for i in right if (i.bbox.top + i.bbox.bottom) / 2 < separator.bbox.top]
         result.extend(band(before_left, before_right))
@@ -374,23 +418,23 @@ class _Builder:
 
     def content(self, owner: tuple[int, int] | None, scope_id: str) -> tuple[str, ...]:
         groups = _line_groups(self.assigned[owner], self.config)
-        items = []
-        local_lines: dict[str, TextLine] = {}
-        for group in groups:
-            line = TextLine(f"{self.page.id}:l{len(self.lines):06d}", _union(f.bbox for f in group),
-                            tuple(f.id for f in group), median(f.style.size for f in group))
-            self.lines.append(line)
-            local_lines[line.id] = line
-            items.append(_Item(line.id, line.bbox, line.font_size,
-                               has_text=any(fragment.text.strip() for fragment in group)))
-        for index, grid in enumerate(self.grids):
-            if grid.parent_cell == owner:
-                table = self.build_table(index)
-                region = Region(f"{table.id}:region", "table", table.bbox, table_id=table.id)
-                self.regions.append(region)
-                items.append(_Item(region.id, region.bbox))
+        items = [_text_item(f"{self.page.id}:l{len(self.lines) + index:06d}", tuple(group))
+                 for index, group in enumerate(groups)]
+        child_tables = [index for index, grid in enumerate(self.grids) if grid.parent_cell == owner]
+        items.extend(_Item(f"{self.grids[index].id}:region", self.grids[index].bbox) for index in child_tables)
         choices: list[_Choice] = []
         ordered = _order(items, self.config, choices)
+
+        local_lines: dict[str, TextLine] = {}
+        for item in sorted((item for item in ordered if item.fragments),
+                           key=lambda i: (i.bbox.top, i.bbox.x0, i.id)):
+            line = TextLine(f"{self.page.id}:l{len(self.lines):06d}", item.bbox,
+                            tuple(f.id for f in item.fragments), item.size)
+            self.lines.append(line)
+            local_lines[item.id] = line
+        for index in child_tables:
+            table = self.build_table(index)
+            self.regions.append(Region(f"{table.id}:region", "table", table.bbox, table_id=table.id))
         separate = {item_id for choice in choices for item_id in choice.columns}
         mapping: dict[str, str] = {}
         result: list[str] = []

@@ -96,6 +96,81 @@ def test_cli_matches_api_on_stdout_file_and_module_under_ascii_locale(source_pdf
     assert result.stdout == expected and not result.stderr
 
 
+def test_narrow_gutter_splits_only_column_lines(tmp_path, capsysbinary):
+    path = tmp_path / "trail-survey.pdf"
+    canvas = Canvas(str(path), pagesize=(600, 500), invariant=1)
+    left = [
+        "Fog lifted before the first survey.",
+        "Scouts checked the north trail.",
+        "The trail curved toward a shallow canyon.",
+        "A cairn marked the crossing.",
+        "Reports reached the base camp at noon.",
+    ]
+    right = [
+        "Teams on the ridge marked wind shifts.",
+        "They recorded the cloud cover.",
+        "One gust lifted dust off the ridge.",
+        "The sky cleared after sunrise.",
+        "Both crews returned by noon.",
+    ]
+    start = 45
+    font = "Helvetica"
+    right_start = start + canvas.stringWidth(left[2], font, 10) + 12.5
+    canvas.setFont(font, 10)
+    for row, (a, b) in enumerate(zip(left, right, strict=True)):
+        y = 450 - 12 * row
+        canvas.drawString(right_start, y, b)
+        canvas.drawString(start, y, a)
+
+    heading_start = "Afternoon route survey log"
+    heading_end = "for the two trail crews"
+    canvas.setFont("Helvetica-Bold", 14)
+    canvas.drawString(start, 390, heading_start)
+    canvas.drawString(right_start, 390, heading_end)
+
+    second_left = [
+        "The lower route crossed a meadow.", "Crews noted two shallow pools.",
+        "They heard frogs by the bank.", "The path ended at the creek.",
+        "No markers were lost in the water.", "The crew returned along the road.",
+        "Everyone signed the station log.", "The survey is complete.",
+    ]
+    second_right = [
+        "The upper path zigzagged uphill.", "Snow covered the final bend.",
+        "Two flags were visible on the ledge.", "The rest were buried in a drift.",
+        "All flags were recovered.", "The crew made it back before dusk.",
+        "A draft map was left at the station.", "The next visit is in spring.",
+    ]
+    canvas.setFont(font, 10)
+    for row, (a, b) in enumerate(zip(second_left, second_right, strict=True)):
+        y = 372 - 12 * row
+        canvas.drawString(start, y, a)
+        canvas.drawString(right_start, y, b)
+
+    # A full-width prose line with a positioned word gap after the first clause.
+    lead = "At the camp the crews agreed that maps"
+    tail = "should be ready before the next survey starts."
+    word_start = right_start - canvas.stringWidth(lead, font, 10) - 5
+    canvas.drawString(word_start, 276, lead)
+    canvas.drawString(right_start, 276, tail)
+    # Same font and a gap as wide as the gutter, in a separate single-column band.
+    note = "The station will archive these trail surveys"
+    detail = "with the original notebooks."
+    note_start = right_start - canvas.stringWidth(note, font, 10) - 12.5
+    canvas.drawString(note_start, 240, note)
+    canvas.drawString(right_start, 240, detail)
+    canvas.save()
+
+    document = parse_pdf(path)
+    page, = document.pages
+    assert page.text.splitlines() == [
+        *left, *right, f"{heading_start} {heading_end}", *second_left, *second_right,
+        f"{lead} {tail}", f"{note} {detail}",
+    ]
+    assert Counter(page.ordered_fragments()) == Counter(page.source.fragments)
+    assert cli.main([str(path)]) == 0
+    assert capsysbinary.readouterr() == (document.to_json().encode("utf-8"), b"")
+
+
 @pytest.mark.parametrize("failure", [False, True])
 def test_decision_provenance_and_fallback(source_pdf, monkeypatch, capsysbinary, failure):
     class Provider:
