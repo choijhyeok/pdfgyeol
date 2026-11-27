@@ -1,3 +1,5 @@
+include Cargo.toml Cargo.lock
+recursive-include rust *.rs
 include assets/otter.png
 include README.en.md
 include examples/make_riverside_notes.py

@@ -4,22 +4,92 @@ from hashlib import sha256
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
+from unicodedata import normalize
 
 import pdfplumber
+from pdfminer.layout import LTChar, LTItem, LTPage
 from pdfplumber.page import Page as PDFPage
 
 from .models import (
-    BBox, Color, Document, ImageEvidence, Page, PageKind, PathSegment,
+    BBox, Color, Document, ImageEvidence, Page, PageKind, PathSegment, PatternColor,
     TextFragment, TextStyle, VectorEvidence, VectorKind,
 )
+
+
+class _ExtractionPage(PDFPage):
+    """Project the LTChar fields this extractor uses during pdfplumber's layout walk."""
+
+    def process_object(self, obj: LTItem) -> dict[str, Any]:
+        if type(obj) is not LTChar or not isinstance(obj.fontname, str):
+            return super().process_object(obj)
+
+        media_x, media_top = self.mediabox[:2]
+        height = self.height
+        text = obj.get_text()
+        if self.pdf.unicode_norm is not None:
+            text = normalize(self.pdf.unicode_norm, text)
+        stroke, fill = obj.graphicstate.scolor, obj.graphicstate.ncolor
+        # Match Page.process_object's arithmetic order before _bbox rebases the result.
+        return {
+            "object_type": "char",
+            "text": text,
+            "fontname": obj.fontname,
+            "size": obj.size,
+            "x0": obj.x0 + media_x if media_x != 0 else obj.x0,
+            "x1": obj.x1 + media_x if media_x != 0 else obj.x1,
+            "top": (height - obj.y1) + media_top,
+            "bottom": (height - obj.y0) + media_top,
+            "stroking_color": stroke if isinstance(stroke, tuple) else (stroke,),
+            "non_stroking_color": fill if isinstance(fill, tuple) else (fill,),
+            "matrix": obj.matrix,
+            "adv": obj.adv,
+            "upright": obj.upright,
+        }
+
+
+class _NativePage(_ExtractionPage):
+    @property
+    def layout(self) -> LTPage:
+        if not hasattr(self, "_layout"):
+            # Match pdfplumber's Page.layout with the audited interpreter adapter.
+            from pdfplumber.page import PDFPageAggregatorWithMarkedContent
+            from pdfplumber.utils.exceptions import PdfminerException
+
+            from ._native_extraction import NativeInterpreter
+
+            device = PDFPageAggregatorWithMarkedContent(
+                self.pdf.rsrcmgr, pageno=self.page_number, laparams=self.pdf.laparams,
+            )
+            interpreter = NativeInterpreter(self.pdf.rsrcmgr, device)
+            try:
+                interpreter.process_page(self.page_obj)
+            except Exception as error:
+                raise PdfminerException(error)
+            self._layout: LTPage = device.get_result()
+        return self._layout
 
 
 def _color(value: Any) -> Color:
     if value is None:
         return None
+    if isinstance(value, str):
+        return PatternColor(value)
+
+    pattern_name: str | None = None
+    if isinstance(value, (tuple, list)):
+        # pdfplumber wraps a character's pattern name in a one-element tuple.
+        if len(value) == 1 and isinstance(value[0], str):
+            return PatternColor(value[0])
+        if (len(value) == 2 and isinstance(value[1], str)
+                and isinstance(value[0], (int, float, tuple, list))):
+            value, pattern_name = value
+
+    components: tuple[float, ...]
     if isinstance(value, (int, float)):
-        return (float(value),)
-    return tuple(float(component) for component in value)
+        components = (float(value),)
+    else:
+        components = tuple(float(component) for component in value)
+    return PatternColor(pattern_name, components) if pattern_name is not None else components
 
 
 def _bbox(obj: dict[str, Any], origin: tuple[float, float]) -> BBox:
@@ -119,13 +189,30 @@ def extract_pdf(path: str | Path, *, password: str | None = None) -> Document:
         checksum = digest.hexdigest()
         document_id = f"pdfgyeol:v1:{checksum}"
         stream.seek(0)
+        plumber_version = version("pdfplumber")
+        miner_version = version("pdfminer.six")
+        # Use stock pdfplumber object processing until dependency upgrades
+        # have been audited for the projected fields and native lexer.
+        project_chars = (plumber_version, miner_version) == ("0.11.11", "20260107")
+        page_class = _ExtractionPage
+        if project_chars:
+            from ._native_extraction import native_available
+
+            if native_available():
+                page_class = _NativePage
         with pdfplumber.open(stream, password=password) as pdf:
             pages = []
             for source in pdf.pages:
-                pages.append(_extract_page(source, document_id))
-                source.close()
+                if project_chars:
+                    source = page_class(
+                        pdf, source.page_obj, source.page_number, source.initial_doctop,
+                    )
+                try:
+                    pages.append(_extract_page(source, document_id))
+                finally:
+                    source.close()
     return Document(
         id=document_id, sha256=checksum, schema_version="1",
-        extractor_version=f"pdfplumber/{version('pdfplumber')};pdfminer.six/{version('pdfminer.six')}",
+        extractor_version=f"pdfplumber/{plumber_version};pdfminer.six/{miner_version}",
         pages=tuple(pages),
     )

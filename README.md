@@ -57,6 +57,8 @@ python -m pip install .
 
 Windows에서 가상 환경을 만들 때는 `py -3 -m venv .venv`를 사용할 수 있습니다. 설치에는 빌드·실행 의존성을 내려받을 수 있는 환경이 필요합니다.
 
+기본 소스 설치는 Rust 없이 동작합니다. Rust와 Cargo가 있는 CPython 환경에서 선택 가속 모듈을 빌드하려면 `PDFGYEOL_BUILD_RUST=1 python -m pip install .`을 실행합니다. Windows PowerShell에서는 설치 명령을 실행하기 전에 `$env:PDFGYEOL_BUILD_RUST = '1'`을 설정합니다. 호환되는 네이티브 wheel은 Rust 없이 설치할 수 있습니다.
+
 ## 빠른 시작
 
 ### CLI로 JSON 저장하기

@@ -23,6 +23,8 @@ for page in document.pages:
 - 반환값은 타입이 명시된 불변 dataclass `Document`, `Page`, `TextFragment`, `TextStyle`, `VectorEvidence`, `ImageEvidence`다. 컬렉션은 tuple이며 외부 PDF 객체나 열린 파일에 의존하지 않는다. `py.typed`를 포함한다.
 - 문서 ID는 `pdfgyeol:v1:<파일 SHA-256>`, 페이지 ID는 그 뒤 `:p000001` 형식이다. 객체 ID는 페이지 ID 뒤 종류와 0부터 시작하는 원문 인덱스다. `source_index`는 글리프·이미지·각 벡터 종류별 pdfplumber 목록 인덱스다. `page_number`는 1부터 시작한다. 경로를 바꿔도 같은 바이트는 같은 ID를 얻는다. 바이트가 달라지면 모든 ID가 달라진다.
 - 같은 파일과 같은 파서 버전에서 ID와 순서를 재현한다. 파서 업그레이드 간 글리프 분해와 순서 호환은 보장하지 않으며 `extractor_version`에 pdfplumber와 pdfminer.six 버전을 기록한다. 장기 재현에는 환경 의존성 버전도 고정해야 한다.
+- pdfplumber 0.11.11과 pdfminer.six 20260107 조합에서는 일반 글리프에서 원문 모델에 필요한 속성만 읽는다. 바이트 인코딩 글꼴 이름, 벡터, 이미지, 다른 라이브러리 버전 조합은 pdfplumber의 기본 객체 변환을 사용한다.
+- 같은 버전 조합에 Rust 확장을 설치하면, PDF 내용 스트림에서 숫자·문자열·연산자를 읽는 단계를 Rust가 맡는다. 글꼴 해석과 도형 그리기 명령은 기존 pdfminer 처리기가 실행한다. 여러 스트림을 이어 읽거나 인라인 이미지가 있거나 크기·중첩 한도에 걸리면 해당 스트림 전체를 기존 처리기로 읽는다. 설치 방법은 [API·CLI 안내](api-cli.md)에 있다.
 - `TextFragment` 하나는 `page.chars` 항목 하나다. 한 항목의 `text`가 여러 코드포인트이거나 공백이어도 그대로 보존한다. 정규화·중복 제거·공백 제거·단어 추출·위치 정렬을 하지 않는다. 겹쳐 그린 동일 글자도 별개 원문 ID를 갖는다.
 - `fragments` 순서는 pdfplumber의 원문 순서이며 사람이 읽는 순서를 뜻하지 않는다. 공백·개행을 추정해 삽입하지 않는다. 글리프 사이 간격과 줄 구조는 좌표로 분석해야 한다. 원문 누락·중복 보장은 pdfplumber가 노출한 항목과의 일대일 대응이며 PDF에 보이는 모든 문자의 정확한 해독을 보장하지 않는다.
 
@@ -30,7 +32,7 @@ for page in document.pages:
 
 - `BBox(x0, top, x1, bottom)`와 벡터의 `points`·`path`는 페이지 **회전을 적용한 MediaBox 왼쪽 위를 (0, 0)**으로 삼는다. x는 오른쪽, y는 아래쪽으로 증가한다. 단위는 PDF point(통상 1/72 inch), 반올림하지 않는다. `width`, `height`도 같은 공간이다. 표준 `/UserUnit=1`을 전제로 하며 비표준 UserUnit의 실제 인치 크기는 정규화하지 않는다.
 - CropBox로 자르지 않는다. MediaBox 밖의 원문도 버리지 않아 음수나 페이지 크기를 넘는 좌표가 가능하다. `source_bbox`는 이동 전 pdfplumber 페이지 상자이며 `rotation`은 원문의 회전 각도다. 회전 0/90/180/270도와 0이 아닌 MediaBox 원점을 합성 PDF로 검사한다.
-- 글꼴 이름·크기·upright·stroke/fill 색상과 advance를 보존한다. 색상은 원문의 성분 tuple이며 RGB로 변환하지 않는다. 폰트 크기는 pdfplumber의 `size`로 회전/변환 시 원래 `Tf` 값과 다를 수 있다. 글자 상자는 글리프의 실제 잉크 경계가 아니라 파서가 계산한 상자다.
+- 글꼴 이름·크기·upright·stroke/fill 색상과 advance를 보존한다. 숫자 색상은 원문의 성분 tuple로 보존한다. 패턴 색상은 PDF 리소스 이름과 파서가 제공한 경우에 한해 기본 색상 성분을 `PatternColor(name, base_components)`에 담는다. 패턴과 그라데이션의 픽셀 색상 계산은 렌더러의 역할이다. 폰트 크기는 pdfplumber의 `size`로 회전/변환 시 원래 `Tf` 값과 다를 수 있다. 글자 상자는 글리프의 실제 잉크 경계가 아니라 파서가 계산한 상자다.
 - `source_matrix`만 예외다. pdfminer가 제공한 원본 CTM이며 위의 top-left 좌표로 이동/반전하지 않는다. 글리프 방향 등 원문 변환의 증거로 사용하고 `bbox`와 직접 혼합하지 않는다.
 
 ## 표·이미지와 페이지 상태

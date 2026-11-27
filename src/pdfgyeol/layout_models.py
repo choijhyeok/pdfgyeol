@@ -90,23 +90,30 @@ class PageLayout:
         """Walk canonical ownership: roots (or supplied regions) -> cells -> lines."""
         regions = {region.id: region for region in self.regions}
         tables = {table.id: table for table in self.tables}
-        result: list[str] = []
-
-        def visit(ids: tuple[str, ...]) -> None:
-            for region_id in ids:
-                region = regions[region_id]
-                if region.table_id is not None:
-                    for row in tables[region.table_id].rows:
-                        for cell in row.cells:
-                            visit(cell.region_ids)
-                else:
-                    result.extend(region.line_ids)
-
-        visit(self.reading_order if region_ids is None else region_ids)
-        return tuple(result)
+        return _ordered_line_ids(self.reading_order if region_ids is None else region_ids,
+                                 regions, tables)
 
     def ordered_fragment_ids(self) -> tuple[str, ...]:
         """Return each owned source fragment once in resolved reading order."""
         lines = {line.id: line for line in self.lines}
         return tuple(fragment_id for line_id in self.ordered_line_ids()
                      for fragment_id in lines[line_id].fragment_ids)
+
+
+def _ordered_line_ids(
+    region_ids: tuple[str, ...], regions: dict[str, Region], tables: dict[str, Table],
+) -> tuple[str, ...]:
+    result: list[str] = []
+
+    def visit(ids: tuple[str, ...]) -> None:
+        for region_id in ids:
+            region = regions[region_id]
+            if region.table_id is not None:
+                for row in tables[region.table_id].rows:
+                    for cell in row.cells:
+                        visit(cell.region_ids)
+            else:
+                result.extend(region.line_ids)
+
+    visit(region_ids)
+    return tuple(result)
