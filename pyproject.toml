@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdfgyeol"
+version = "0.1.0"
+description = "Source-preserving PDF layout, reading order, and JSON export"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = ["pdfplumber>=0.11.11,<0.12"]
+
+[project.scripts]
+pdfgyeol = "pdfgyeol.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest>=8", "reportlab>=4"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pdfgyeol = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
