@@ -1,9 +1,10 @@
-"""PDF결 source extraction, local geometry and opt-in Decision scoring."""
+"""PDF결 local PDF parsing, source extraction and opt-in Decision scoring."""
 
-from .extraction import extract_pdf
+from .api import PARSE_SCHEMA_VERSION, ParsedDocument, ParsedPage, parse_pdf
 from .decision import (
     DecisionClient, DecisionConfig, DecisionProvider, DecisionRecord, DecisionResult, resolve_page,
 )
+from .extraction import extract_pdf
 from .layout import infer_page, iter_layout
 from .layout_models import (
     LayoutConfig, PageLayout, ReadingAlternative, ReadingCandidate, Region,
@@ -22,6 +23,7 @@ from .models import (
 )
 
 __all__ = [
+    "PARSE_SCHEMA_VERSION", "ParsedDocument", "ParsedPage", "parse_pdf",
     "BBox", "Document", "ImageEvidence", "Page", "PageKind", "PathSegment",
     "TextFragment", "TextStyle", "VectorEvidence", "extract_pdf",
     "LayoutConfig", "PageLayout", "ReadingAlternative", "ReadingCandidate", "Region",

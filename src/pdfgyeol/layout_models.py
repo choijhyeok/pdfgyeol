@@ -86,11 +86,10 @@ class PageLayout:
     alternatives: tuple[ReadingAlternative, ...]
     warnings: tuple[str, ...]
 
-    def ordered_fragment_ids(self) -> tuple[str, ...]:
-        """Walk canonical ownership once: root regions -> table cells -> text lines."""
+    def ordered_line_ids(self, region_ids: tuple[str, ...] | None = None) -> tuple[str, ...]:
+        """Walk canonical ownership: roots (or supplied regions) -> cells -> lines."""
         regions = {region.id: region for region in self.regions}
         tables = {table.id: table for table in self.tables}
-        lines = {line.id: line for line in self.lines}
         result: list[str] = []
 
         def visit(ids: tuple[str, ...]) -> None:
@@ -101,8 +100,13 @@ class PageLayout:
                         for cell in row.cells:
                             visit(cell.region_ids)
                 else:
-                    for line_id in region.line_ids:
-                        result.extend(lines[line_id].fragment_ids)
+                    result.extend(region.line_ids)
 
-        visit(self.reading_order)
+        visit(self.reading_order if region_ids is None else region_ids)
         return tuple(result)
+
+    def ordered_fragment_ids(self) -> tuple[str, ...]:
+        """Return each owned source fragment once in resolved reading order."""
+        lines = {line.id: line for line in self.lines}
+        return tuple(fragment_id for line_id in self.ordered_line_ids()
+                     for fragment_id in lines[line_id].fragment_ids)

@@ -1,3 +1,10 @@
 include docs/extraction.md
 include docs/layout.md
+include docs/api-cli.md
+include docs/decision.md
+include docs/decision-validation.md
+include tools/decision_evaluation.py
+include tools/decision_evaluation_protocol.json
+include tools/decision_live_probe.py
+include tools/smoke_distribution.py
 include tools/smoke_extraction.py
