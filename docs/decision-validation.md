@@ -2,10 +2,6 @@
 
 2026-11-27, 기존 통합 브랜치 `choijhyeok/feature/pdfgyeol-v1`, 기준 `ab4f6edd13ccf556d2c226fa1662386ae9443491`.
 
-## 런타임 근거
-
-구현 시작 전 현재 `CODEX_SESSION_ID=01a21b35-6618-75b0-8312-8f5216689c41`의 로컬 rollout `turn_context`를 읽어 `model=gpt-6.1-sol`, `effort=high`를 확인했다. 요청 모델과 일치했다. 모델 대체·하위 에이전트·추가 워크트리는 사용하지 않았다.
-
 ## 기존 후보 변경 통합 검토
 
 직전 `ab4f6ed`의 `aligned_label_value_rows`는 4~16개의 짧고 띄어진 정렬 항목에서 기본 `columns`와 대안 `rows`를 만든다. 기존 `sparse_aligned_blocks`와 같은 페이지·셀 범위의 연속 ID 순열 계약을 사용하므로 판정기에 그대로 연결했다. 기하 구현은 수정하지 않았다. 4·8행 측정 PDF와 기존 기능 2 회귀 검사는 후보 계약·기본 읽기 순서 보존을 확인한다. 중첩 셀과 독립된 여러 후보의 적용은 별도로 검사한다.

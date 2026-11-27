@@ -1,0 +1,69 @@
+{
+  "id": "synthetic-order-v2",
+  "provenance": "New operator-generated non-insurance items; no source documents or reused live examples.",
+  "policies": {
+    "baseline": {"min_score": 0.55, "min_margin": 0.10},
+    "challenger": {"min_score": 0.35, "min_margin": 0.10}
+  },
+  "rules": {
+    "calls": "At most 12 attempts total, exactly one per item, no retries. Any failure is retained; never replace an item.",
+    "payload": "Unchanged production structured geometry, excerpts and questions. Both policies replay each identical validated answer in memory.",
+    "split": "Six development items first. Freeze development eligibility before scoring six untouched holdout items once. No threshold search, prompt edits or holdout tuning.",
+    "gold": "Rows preserve authored label/value associations; columns preserve each independently authored paragraph. Low-evidence items have no justified reading order: success requires deferred, not a guessed default.",
+    "metrics": "Per class: exact-order successes (low-evidence: abstention successes), corrections, regressions and abstains. Correction/regression compares policy success against baseline success on the same item; also report geometry success and selections.",
+    "development_eligibility": "All six valid responses, at least one row correction, zero regressions in every class, both low-evidence items deferred.",
+    "holdout_acceptance": "All six valid responses, at least one row correction, zero regressions in every class, both low-evidence items deferred. Development eligibility must already pass. Otherwise inconclusive or rejected; no further tuning or calls.",
+    "release": "Even a passing small synthetic holdout supports only experimental deployment-specific opt-in; baseline defaults stay .55/.10 pending independent representative validation.",
+    "invariants": "Disabled calls zero; every item exactly one production alternative; both gold permutations checked offline before calls; source IDs/text and outside-region order conserved for every policy. Fail preflight without calls on fixture mismatch."
+  },
+  "items": [
+    {
+      "id": "dev-library", "split": "development", "class": "rows", "gold": "rows",
+      "pairs": [["Loan period", "21 days"], ["Renewals", "2 allowed"], ["Hold limit", "6 books"], ["Pickup window", "5 days"]]
+    },
+    {
+      "id": "dev-baking", "split": "development", "class": "rows", "gold": "rows",
+      "pairs": [["Flour", "250 grams"], ["Butter", "80 grams"], ["Sugar", "60 grams"], ["Milk", "120 ml"]]
+    },
+    {
+      "id": "dev-astronomy", "split": "development", "class": "prose", "gold": "columns",
+      "pairs": [["The comet passed behind", "The telescope remained inside"], ["the planet before sunrise.", "the dome during the storm."]]
+    },
+    {
+      "id": "dev-railway", "split": "development", "class": "prose", "gold": "columns",
+      "pairs": [["The train crossed the bridge", "The station clock stopped"], ["before entering the valley.", "after the power supply failed."]]
+    },
+    {
+      "id": "dev-catalog-codes", "split": "development", "class": "low_evidence", "gold": "abstain",
+      "pairs": [["Q7", "M2"], ["R4", "N9"]]
+    },
+    {
+      "id": "dev-tile-marks", "split": "development", "class": "low_evidence", "gold": "abstain",
+      "pairs": [["Birch", "Ochre"], ["Larch", "Indigo"]]
+    },
+    {
+      "id": "holdout-theatre", "split": "holdout", "class": "rows", "gold": "rows",
+      "pairs": [["Doors open", "18:30"], ["Act one", "19:00"], ["Interval", "19:45"], ["Curtain", "21:10"]]
+    },
+    {
+      "id": "holdout-printing", "split": "holdout", "class": "rows", "gold": "rows",
+      "pairs": [["Paper size", "A4"], ["Copies", "120"], ["Ink mode", "Grayscale"], ["Binding", "Spiral"]]
+    },
+    {
+      "id": "holdout-archaeology", "split": "holdout", "class": "prose", "gold": "columns",
+      "pairs": [["The team uncovered a mosaic", "The curator sealed the crate"], ["beneath the courtyard floor.", "before arranging its transport."]]
+    },
+    {
+      "id": "holdout-robotics", "split": "holdout", "class": "prose", "gold": "columns",
+      "pairs": [["The rover stopped near a rock", "The drone returned to its pad"], ["when its front sensor failed.", "after completing the survey."]]
+    },
+    {
+      "id": "holdout-board-marks", "split": "holdout", "class": "low_evidence", "gold": "abstain",
+      "pairs": [["U8", "F3"], ["V1", "G6"]]
+    },
+    {
+      "id": "holdout-token-names", "split": "holdout", "class": "low_evidence", "gold": "abstain",
+      "pairs": [["Quartz", "Amber"], ["Flint", "Jade"]]
+    }
+  ]
+}
