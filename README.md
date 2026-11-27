@@ -113,7 +113,22 @@ East
 
 ## 선택 기능 Decision
 
-Decision은 기본으로 꺼져 있습니다. CLI에서 `--decision`, Python에서 `decision_config=DecisionConfig(enabled=True)`로 켭니다. 서로 다른 유효 후보가 발견되면 그 영역의 제한된 텍스트 발췌와 배치, 후보 순서를 사용자가 설정한 HTTPS 채점 주소로 보냅니다. Python에서는 제공자를 직접 지정할 수도 있습니다. 응답은 기존 후보의 점수로만 쓰며, 실패하거나 점수 차이가 충분하지 않으면 기하 규칙의 순서를 유지합니다. 선택과 보류는 JSON에 기록됩니다. [연결 설정과 요청 형식](docs/decision.md)
+Decision은 기본으로 꺼져 있습니다. Python에서 `pdfgyeol.host`를 선택하면 이후 `parse_pdf()` 호출에서 모호한 영역을 채점합니다. Azure의 System One 배포를 사용하려면 배포의 전체 채점 URL과 API 키를 설정합니다.
+
+```python
+import os
+import pdfgyeol
+
+pdfgyeol.host = "ms"
+pdfgyeol.endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
+pdfgyeol.apikey = os.environ["AZURE_OPENAI_API_KEY"]
+pdfgyeol.model = os.getenv("DECISION_MODEL_DEPLOYMENT")  # 생략 시 Decision-1.1
+document = pdfgyeol.parse_pdf("riverside-notes.pdf")
+```
+
+`"jev"`와 `"openai"`에는 기본 채점 URL이 있으며 각 서비스의 키를 사용합니다. `"custom"` 또는 `"local"`에는 호환 채점 URL을 직접 지정합니다. `pdfgyeol.host = None`으로 선택을 해제하거나, `decision_config=pdfgyeol.DecisionConfig(enabled=False)`를 넘겨 호출 한 번만 끌 수 있습니다. CLI에서는 `--decision`과 기존 Azure 환경 변수를 사용합니다. [제공자별 설정과 로컬 Ollama 예제](docs/decision.md#명시적-설정과-전송-범위)
+
+서로 다른 유효 후보가 발견되면 해당 영역의 제한된 텍스트 발췌, 배치, 후보 순서를 채점 주소로 보냅니다. 응답은 기존 후보의 점수로 쓰며, 채점에 실패하거나 점수 차이가 충분하지 않으면 기하 규칙의 순서를 유지합니다. 선택과 보류는 JSON에 기록됩니다.
 
 새로 만든 합성 문서의 독립 검증 표본 6개에서 실제 순서 교정은 **0건**이었습니다. PDF결은 기본 임곗값을 유지합니다. [Decision 검증 결과](docs/decision-validation.md)
 

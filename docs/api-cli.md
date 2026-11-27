@@ -31,13 +31,17 @@ assert document.to_dict()["schema_version"] == "pdfgyeol.parse/1"
 
 ## Decision
 
-기본 API와 CLI는 키나 네트워크 없이 동작합니다. `decision_enabled`는 `false`, `pages[].decisions`는 빈 배열입니다. 기하 규칙에서 찾은 순서 대안은 `layout.alternatives`에 남습니다.
+Decision을 끈 기본 실행은 키나 네트워크 없이 동작합니다. `decision_enabled`는 `false`, `pages[].decisions`는 빈 배열입니다. 기하 규칙에서 찾은 순서 대안은 `layout.alternatives`에 남습니다.
 
 ```sh
 pdfgyeol input.pdf --decision --output result-with-decisions.json
 ```
 
-Python에서는 `parse_pdf("input.pdf", decision_config=DecisionConfig(enabled=True))`로 켭니다. `DecisionConfig`는 `pdfgyeol`에서 가져옵니다. 필요하면 `provider`에 구현을 주입할 수 있으며 활성화 설정은 동일합니다. Decision을 켜면 유효한 대안의 제한된 발췌가 제공자에게 전송될 수 있습니다. 자격 증명 설정, 요청 한도와 선택 기준은 [Decision 문서](decision.md)에 있습니다. 보류 시 기하 순서가 유지되며 선택·보류 기록은 `pages[].decisions`에 들어갑니다. 설정 누락, 호출 실패, 응답 무효는 CLI stderr에도 표시되며 로컬 결과 내보내기는 성공합니다.
+CLI는 `--decision`을 켜고 채점이 필요한 경우 `AZURE_OPENAI_ENDPOINT`의 전체 채점 URL, `AZURE_OPENAI_API_KEY`, 선택 사항인 `DECISION_MODEL_DEPLOYMENT`를 읽습니다.
+
+Python에서는 `pdfgyeol.host`와 해당 제공자의 설정을 지정하면 `parse_pdf()`에서 Decision이 켜집니다. `pdfgyeol.host = None`으로 모듈의 선택을 해제합니다. `decision_config=pdfgyeol.DecisionConfig(enabled=False)`를 넘기면 해당 호출에서 Decision을 끕니다. 호출마다 독립된 설정이 필요하면 `DecisionClient.from_host()`로 만든 `provider`와 `DecisionConfig(enabled=True)`를 함께 넘깁니다. 모듈과 호출 양쪽에서 제공자를 선택하지 않은 상태에서 `DecisionConfig(enabled=True)`를 넘기면 기존 Azure 환경 변수를 사용합니다. [제공자별 예제와 설정](decision.md#명시적-설정과-전송-범위)
+
+Decision을 켜면 유효한 대안 영역의 제한된 발췌가 제공자에게 전송될 수 있습니다. 보류 시 기하 순서가 유지되며 선택·보류 기록은 `pages[].decisions`에 들어갑니다. CLI의 환경 설정 누락, 호출 실패, 응답 무효는 stderr에 표시되며 로컬 결과 내보내기는 성공합니다. [요청 한도와 전송 범위](decision.md#전송-범위와-요청-형식) · [선택 기준](decision.md#적용-전-검증과-보류)
 
 출력 품질은 [레이아웃 규칙의 한계](layout.md#검증과-한계)를 따릅니다. 이미지 전용 페이지는 이미지 위치와 함께 표시되며 OCR 텍스트는 생성되지 않습니다. 문서 순서와 표의 정확도는 원본의 배치에 따라 달라집니다.
 

@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from .decision import DecisionConfig, DecisionProvider, DecisionRecord, resolve_page
+from .decision import DecisionClient, DecisionConfig, DecisionProvider, DecisionRecord, resolve_page
 from .extraction import extract_pdf
 from .insurance import InsuranceAnnotations, annotate_insurance
 from .layout import infer_page
@@ -110,11 +110,22 @@ def parse_pdf(path: str | Path, *, password: str | None = None,
               insurance: bool = False) -> ParsedDocument:
     """Parse a local PDF and optionally annotate Korean insurance sections.
 
-    Supplying a provider alone does not enable Decision. No environment access or
-    provider call without DecisionConfig(enabled=True) and an eligible candidate.
+    Set pdfgyeol.host or pass DecisionConfig(enabled=True) to enable Decision.
+    A per-call provider overrides the module host. An explicit disabled config
+    skips Decision. Invalid module host settings raise before scoring starts.
     Insurance annotation runs locally after the final reading order is resolved.
     I/O/password/parser errors propagate; no output files or directories created.
     """
+    if decision_config is None or decision_config.enabled:
+        import pdfgyeol
+
+        host = pdfgyeol.host
+        if host is not None:
+            decision_config = decision_config or DecisionConfig(enabled=True)
+            if provider is None:
+                provider = DecisionClient.from_host(
+                    host, endpoint=pdfgyeol.endpoint, apikey=pdfgyeol.apikey, model=pdfgyeol.model,
+                )
     config = decision_config or DecisionConfig()
     document = extract_pdf(path, password=password)
     pages = []

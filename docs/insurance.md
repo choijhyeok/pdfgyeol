@@ -15,7 +15,7 @@ for section in document.insurance.sections:
     print(section.kind, section.heading.line_ids)
 ```
 
-보험 옵션은 오프라인에서 파싱이 끝난 뒤 실행됩니다. `--decision`과 함께 쓰면 Decision까지 반영한 읽기 순서를 사용합니다. 보험 옵션을 켜기 전후에 원문, 레이아웃, 읽기 순서, 표시 텍스트, Decision 요청과 기록은 동일합니다.
+보험 옵션은 읽기 순서가 확정된 뒤 로컬에서 실행됩니다. Decision을 켜면 채점 결과를 반영한 읽기 순서를 사용합니다. 보험 옵션을 켜기 전후에 원문, 레이아웃, 읽기 순서, 표시 텍스트, Decision 요청과 기록은 동일합니다.
 
 ## JSON과 Python 타입
 

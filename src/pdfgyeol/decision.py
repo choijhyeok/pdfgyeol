@@ -4,12 +4,15 @@ from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from hashlib import sha256
+from http.client import HTTPException
+from ipaddress import ip_address
 import json
 from math import isclose, isfinite
 import os
-from typing import Any, Literal, Protocol
-from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from typing import Any, Literal, Protocol, TypeGuard
+from urllib.error import HTTPError
+from urllib.parse import SplitResult, urlsplit
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from .layout import infer_page
 from .layout_models import PageLayout, ReadingAlternative
@@ -63,22 +66,129 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
+_HOST_DEFAULTS: dict[str, tuple[str | None, str]] = {
+    "jev": ("https://api.typesafe.ai/v1/systemone", "jev-latest"),
+    "openai": ("https://api.openai.com/v1/decisions", "gpt-6-luna"),
+    "ms": (None, "Decision-1.1"),
+    "custom": (None, "jev-latest"),
+}
+
+
+def _is_loopback(hostname: str) -> bool:
+    if hostname == "localhost":
+        return True
+    try:
+        return ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def _validate_endpoint(endpoint: str, *, allow_loopback_http: bool) -> SplitResult:
+    if (not isinstance(endpoint, str) or any(not 33 <= ord(c) <= 126 for c in endpoint)
+            or "#" in endpoint or "\\" in endpoint):
+        raise ValueError("Invalid Decision endpoint URL")
+    try:
+        url = urlsplit(endpoint)
+        port = url.port  # Validate explicit ports without resolving the hostname.
+        hostname = url.hostname
+    except ValueError:
+        raise ValueError("Invalid Decision endpoint URL") from None
+    if (not hostname or url.username is not None or port == 0
+            or not (url.scheme == "https" or
+                    url.scheme == "http" and allow_loopback_http and _is_loopback(hostname))):
+        raise ValueError("Decision requires an HTTPS endpoint or a custom HTTP loopback endpoint")
+    return url
+
+
+def _is_decisions_path(url: SplitResult) -> bool:
+    return url.path.rstrip("/").endswith("/decisions")
+
+
+def _valid_probability(value: object) -> TypeGuard[float | int]:
+    if type(value) is not int and type(value) is not float:
+        return False
+    return 0 <= value <= 1 and isfinite(value)
+
+
+def _answer_scores(raw: bytes, questions: dict[str, str], *, openai: bool) -> dict[str, float]:
+    try:
+        if len(raw) > 65536:
+            raise ValueError
+        data = json.loads(raw, object_pairs_hook=_unique_object)
+        if (not isinstance(data, dict) or data.get("type") == "refusal"
+                or data.get("refusal") is not None):
+            raise ValueError
+        answers = data["answers"]
+        if openai:
+            if not isinstance(answers, list):
+                raise ValueError
+            named_answers: dict[str, Any] = {}
+            for answer in answers:
+                name = answer.get("name") if isinstance(answer, dict) else None
+                if not isinstance(name, str) or name in named_answers:
+                    raise ValueError
+                named_answers[name] = answer
+            answers = named_answers
+        if not isinstance(answers, dict) or set(answers) != set(questions):
+            raise ValueError
+        scores = {}
+        expected_type = "predicate" if openai else "noul"
+        score_key = "probability" if openai else "noul"
+        for name, answer in answers.items():
+            if (not isinstance(answer, dict)
+                    or answer.get("type", None if openai else "noul") != expected_type
+                    or answer.get("refusal") is not None):
+                raise ValueError
+            score = answer.get(score_key)
+            if not _valid_probability(score):
+                raise ValueError
+            scores[name] = float(score)
+        return scores
+    except (ValueError, KeyError, RecursionError):
+        raise _InvalidAnswer("Malformed Decision answer") from None
+
+
 @dataclass(frozen=True, slots=True)
 class DecisionClient:
-    """Decision-1.1 state/questions API; no .env discovery or implicit requests."""
+    """Bounded System One or OpenAI Decisions client with explicit configuration."""
 
     endpoint: str = field(repr=False)
     api_key: str = field(repr=False)
-    model: str = "Decision-1.1"
+    model: str = field(default="Decision-1.1", repr=False)
     timeout: float = 20.0
+    _host: str | None = field(default=None, kw_only=True, repr=False)
+    _openai: bool = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        url = urlsplit(self.endpoint)
-        if (url.scheme != "https" or not url.hostname or url.username or url.password
-                or url.fragment or not self.api_key or not self.model):
-            raise ValueError("Decision requires an HTTPS endpoint, deployment and API key")
-        if not isfinite(self.timeout) or self.timeout <= 0:
+        custom = self._host == "custom"
+        url = _validate_endpoint(self.endpoint, allow_loopback_http=custom)
+        object.__setattr__(self, "_openai", self._host == "openai" or custom and _is_decisions_path(url))
+        if (not isinstance(self.api_key, str) or (not self.api_key and self._host != "custom")
+                or any(not 33 <= ord(c) <= 126 for c in self.api_key)):
+            raise ValueError("Decision requires a valid API key for this host")
+        if not isinstance(self.model, str) or not self.model.strip() or not self.model.isprintable():
+            raise ValueError("Decision requires a valid model or deployment name")
+        if (type(self.timeout) not in (float, int) or self.timeout <= 0
+                or not isfinite(self.timeout)):
             raise ValueError("Decision timeout must be finite and positive")
+
+    @classmethod
+    def from_host(cls, host: str, *, endpoint: str | None = None, apikey: str | None = None,
+                  model: str | None = None) -> "DecisionClient":
+        """Select a provider using only the supplied endpoint, key and model settings."""
+        host = "custom" if host == "local" else host
+        if not isinstance(host, str) or host not in _HOST_DEFAULTS:
+            raise ValueError("Decision host must be jev, openai, ms, custom or local")
+        default_endpoint, default_model = _HOST_DEFAULTS[host]
+        if endpoint is None:
+            endpoint = default_endpoint
+        if endpoint is None:
+            raise ValueError("Decision requires an explicit endpoint for this host")
+        if host == "custom" and model is None and _is_decisions_path(
+                _validate_endpoint(endpoint, allow_loopback_http=True)):
+            default_model = _HOST_DEFAULTS["openai"][1]
+        return cls(endpoint, "" if apikey is None else apikey,
+                   default_model if model is None else model, _host=host)
 
     @classmethod
     def from_env(cls) -> "DecisionClient":
@@ -88,26 +198,47 @@ class DecisionClient:
                    os.environ.get("DECISION_MODEL_DEPLOYMENT", "Decision-1.1"))
 
     def score(self, state: str, questions: dict[str, str]) -> Mapping[str, float]:
-        body = json.dumps({
-            "model": self.model, "state": state,
-            "questions": {key: {"type": "noul", "instructions": value}
-                          for key, value in questions.items()},
-        }).encode("utf-8")
-        request = Request(self.endpoint, body, {"api-key": self.api_key,
-                                              "Content-Type": "application/json"})
-        # One bounded attempt. Transient errors defer to geometry; no retry storms.
-        with build_opener(_NoRedirect()).open(request, timeout=self.timeout) as response:
-            raw = response.read(65537)
+        data: dict[str, object] = {"model": self.model}
+        if self._openai:
+            data["input"] = state
+            data["questions"] = [
+                {"name": name, "type": "predicate", "instructions": instructions}
+                for name, instructions in questions.items()
+            ]
+        else:
+            data["state"] = state
+            data["questions"] = {
+                name: {"type": "noul", "instructions": instructions}
+                for name, instructions in questions.items()
+            }
+        headers = {"Content-Type": "application/json"}
+        if self._host in (None, "ms"):
+            headers["api-key"] = self.api_key
+        elif self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        # Cleartext requests to loopback must go directly to the local service.
+        opener = (build_opener(_NoRedirect(), ProxyHandler({}))
+                  if self.endpoint.lower().startswith("http://") else build_opener(_NoRedirect()))
         try:
-            if len(raw) > 65536:
-                raise ValueError("Decision response exceeded limit")
-            data = json.loads(raw, object_pairs_hook=_unique_object)
-            answers = data["answers"]
-            if not isinstance(answers, dict) or set(answers) != set(questions):
-                raise ValueError("Decision answer keys do not match questions")
-            return {key: answer["noul"] for key, answer in answers.items()}
-        except (ValueError, KeyError, TypeError) as exc:
-            raise _InvalidAnswer("Malformed Decision answer") from exc
+            request = Request(self.endpoint, json.dumps(data).encode("utf-8"), headers)
+            with opener.open(request, timeout=self.timeout) as response:
+                raw = response.read(65537)
+        except HTTPError as error:
+            error.close()
+            raise OSError("Decision request failed") from None
+        except (HTTPException, OSError, ValueError):
+            raise OSError("Decision request failed") from None
+        return _answer_scores(raw, questions, openai=self._openai)
+
+
+def _provenance(provider: DecisionProvider) -> tuple[str, str | None]:
+    name = type(provider).__name__
+    model = provider.model
+    if isinstance(provider, DecisionClient):
+        name = provider._host or name
+        if model in (provider.api_key, provider.endpoint):
+            return name, None
+    return name, model
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,7 +456,8 @@ def resolve_page(page: Page, layout: PageLayout | None = None, *,
             except (ValueError, TypeError):
                 records.append(replace(record, reason="not_configured"))
                 continue
-        record = replace(record, provider=type(provider).__name__, model=provider.model,
+        provider_name, model = _provenance(provider)
+        record = replace(record, provider=provider_name, model=model,
                          state_sha256=sha256(state.encode("utf-8")).hexdigest())
         questions = {f"candidate_{i}": (
             f"Probability that candidate_{i} best matches the intended reading order of this active region. "
@@ -344,8 +476,7 @@ def resolve_page(page: Page, layout: PageLayout | None = None, *,
             records.append(replace(record, reason="provider_failure"))
             continue
         if (not isinstance(answer, Mapping) or set(answer) != set(questions)
-                or any(type(v) not in (float, int) or not 0 <= v <= 1 or not isfinite(v)
-                       for v in answer.values())):
+                or any(not _valid_probability(v) for v in answer.values())):
             records.append(replace(record, reason="invalid_answer"))
             continue
         scores = tuple(float(answer[key]) for key in questions)

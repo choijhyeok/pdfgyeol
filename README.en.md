@@ -113,7 +113,22 @@ Use `document.to_dict()` or `document.to_json()` to get the same structure as th
 
 ## Optional Decision scoring
 
-Decision is off by default. Enable it with `--decision` in the CLI or `decision_config=DecisionConfig(enabled=True)` in Python. When the parser finds distinct valid candidates, it sends limited text excerpts, layout information, and the candidate orders for that region to an HTTPS scoring endpoint you configure. In Python, you can also supply a provider directly. The parser uses the response only to score existing candidates. It keeps the order inferred from the page geometry if scoring fails or the score margin is too small. The JSON records selections and deferrals. [Connection settings and request format (Korean)](docs/decision.md)
+Decision is off by default. Set `pdfgyeol.host` to score ambiguous regions in subsequent `parse_pdf()` calls. For Azure System One, supply the deployment's full scoring URL and API key.
+
+```python
+import os
+import pdfgyeol
+
+pdfgyeol.host = "ms"
+pdfgyeol.endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
+pdfgyeol.apikey = os.environ["AZURE_OPENAI_API_KEY"]
+pdfgyeol.model = os.getenv("DECISION_MODEL_DEPLOYMENT")  # Defaults to Decision-1.1
+document = pdfgyeol.parse_pdf("riverside-notes.pdf")
+```
+
+`"jev"` and `"openai"` provide default scoring URLs and use their respective service keys. For `"custom"` or `"local"`, supply a compatible scoring URL. Set `pdfgyeol.host = None` to clear the host selection, or pass `decision_config=pdfgyeol.DecisionConfig(enabled=False)` to turn Decision off for one call. The CLI uses `--decision` and the existing Azure environment variables. [Provider settings and local Ollama example (Korean)](docs/decision.md#명시적-설정과-전송-범위)
+
+When the parser finds distinct valid candidates, it sends limited text excerpts, layout information, and the candidate orders for that region to the scoring endpoint. The response scores existing candidates. The parser keeps the order inferred from page geometry if scoring fails or the score margin is too small. The JSON records selections and deferrals.
 
 Decision made **0 reading-order corrections** on six held-out synthetic documents. pdfgyeol retains the default thresholds. [Decision validation results (Korean)](docs/decision-validation.md)
 

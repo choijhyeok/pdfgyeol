@@ -6,39 +6,82 @@ from pdfgyeol import DecisionConfig, extract_pdf, infer_page, resolve_page
 page = extract_pdf("notes.pdf").pages[0]
 local = infer_page(page)
 
-# 기본값: 키·환경 변수·.env·네트워크 접근 없이 기하 순서 유지
+# 기본값은 로컬 기하 순서를 유지한다.
 disabled = resolve_page(page, local)
 assert disabled.layout == local
 
-# 사용자가 호출을 명시적으로 켠 경우만 국소 후보 비교
+# 명시적으로 켜면 기존 Azure 환경 설정으로 국소 후보를 비교한다.
 result = resolve_page(page, local, config=DecisionConfig(enabled=True))
 for decision in result.decisions:
     print(decision.scope_id, decision.outcome, decision.reason)
 ordered_source_ids = result.layout.ordered_fragment_ids()
 ```
 
-`resolve_page`는 기하 규칙이 만든 레이아웃을 받아 새 `DecisionResult(layout, decisions)`를 반환한다. `layout`을 생략하면 내부에서 `infer_page(page)`를 실행한다. 입력 `Page`·`PageLayout`은 불변이며 모델 응답은 순서 후보를 고르는 데만 사용한다. `infer_page`와 `iter_layout`은 로컬에서 동작한다.
+`resolve_page`는 기하 규칙이 만든 레이아웃을 받아 새 `DecisionResult(layout, decisions)`를 반환한다. `layout`을 생략하면 내부에서 `infer_page(page)`를 실행한다. 입력 `Page`·`PageLayout`은 불변이며 모델 응답은 순서 후보를 고르는 데만 사용한다. `infer_page`와 `iter_layout`은 로컬에서 동작한다. `resolve_page`에서 채점하려면 `config=DecisionConfig(enabled=True)`를 넘긴다. `provider`를 생략하면 기존 Azure 환경 설정을 쓴다.
 
 ## 명시적 설정과 전송 범위
 
-활성 상태에서도 서로 다른 유효 후보가 없으면 클라이언트를 만들거나 키를 읽지 않는다. 호출이 필요한 시점에만 프로세스 환경의 `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `DECISION_MODEL_DEPLOYMENT`를 읽는다. 배포명 기본값은 `Decision-1.1`이다. 운영자가 실제 Decision-1.1 배포명을 지정해야 하며 배포 별칭의 원격 모델 버전을 클라이언트가 독립적으로 증명하지는 않는다. `.env` 자동 탐색·로딩은 없다. 키 누락은 `not_configured` 보류 기록을 남긴다.
+### Python 모듈 설정
 
-직접 설정하거나 테스트 제공자를 주입할 수도 있다.
+`pdfgyeol.host`를 설정하면 `parse_pdf()`를 호출할 때 해당 제공자로 Decision을 켠다. 호출 시작 시점에 `host`, `endpoint`, `apikey`, `model`을 읽는다. `endpoint`를 지정할 때는 API 경로가 포함된 전체 채점 URL을 사용한다. `model`을 생략하면 제공자 기본값을 쓰고, `ms`에 지정할 때는 실제 배포명을 사용한다. 제공자를 바꿀 때는 `endpoint`, `apikey`, `model`도 새 제공자에 맞게 설정한다. 선택한 제공자의 기본 URL과 모델을 쓰려면 각각 `None`으로 둔다.
+
+| `host` | 전체 채점 URL | `apikey` | 기본 `model` | 제공자 문서 |
+|---|---|---|---|---|
+| `jev` | 기본 `https://api.typesafe.ai/v1/systemone` | TypeSafe 키 → `Authorization: Bearer` | `jev-latest` | [TypeSafe 빠른 시작](https://docs.typesafe.ai/introduction/quickstart) |
+| `openai` | 기본 `https://api.openai.com/v1/decisions` | OpenAI 키 → `Authorization: Bearer` | `gpt-6-luna` | [OpenAI Decisions API](https://developers.openai.com/api/reference/resources/decisions/methods/create) |
+| `ms` | 직접 지정. Foundry에서 쓰는 경로는 `/providers/microsoft/v1/systemone` | Azure 리소스 키 → `api-key` | `Decision-1.1` | [Microsoft Foundry 배포 및 호출](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-microsoft-decision) |
+| `custom` 또는 `local` | 직접 지정. 경로 끝이 `/decisions`이면 OpenAI Decisions, 그 외에는 System One 형식 | 선택 사항 → `Authorization: Bearer` | System One은 `jev-latest`, Decisions는 `gpt-6-luna` | [Ollama System One](https://ollama.com/blog/ollama-now-supports-jev-style-decision-models) |
+
+Jev의 기본 URL과 모델로 채점하는 예제다. 환경 변수에서 키를 읽어 `apikey`에 명시적으로 넘긴다.
 
 ```python
 import os
-from pdfgyeol import DecisionClient, DecisionConfig, resolve_page
+import pdfgyeol
 
-provider = DecisionClient(
-    endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],  # 완전한 HTTPS scoring URL
-    api_key=os.environ["AZURE_OPENAI_API_KEY"],
-    model="Decision-1.1",
-    timeout=20,
-)
-result = resolve_page(page, local, config=DecisionConfig(enabled=True), provider=provider)
+pdfgyeol.host = "jev"
+pdfgyeol.endpoint = None
+pdfgyeol.apikey = os.environ["TYPESAFE_API_KEY"]
+pdfgyeol.model = None
+document = pdfgyeol.parse_pdf("notes.pdf")
 ```
 
-HTTP 요청은 `model`, 문자열 `state`, `questions`를 보낸다. 질문별 형태는 `{"type": "noul", "instructions": "..."}`이며 응답은 `answers.candidate_N.noul` 수치다. OpenAI chat/completions 형식은 사용하지 않는다. HTTPS만 허용하고 리다이렉트는 거부한다. 호출은 대안별 한 번이며 타임아웃·429·5xx 등 실패 시 재시도 없이 기본 기하 순서를 유지한다. 키·endpoint는 클라이언트 `repr`에서 제외하고 예외 본문을 판정 기록에 저장하지 않는다.
+Decision API를 지원하는 로컬 Ollama 서버를 실행한 뒤 `ollama pull nimble`로 모델을 내려받으면 키 없이 이 예제를 실행할 수 있다. `custom`과 `local`에서 평문 HTTP는 `localhost` 또는 루프백 IP에만 허용한다. 다른 주소에는 HTTPS를 사용한다. [Ollama의 Decision API 설정](https://ollama.com/blog/ollama-now-supports-jev-style-decision-models)
+
+```python
+import pdfgyeol
+
+pdfgyeol.host = "local"
+pdfgyeol.endpoint = "http://localhost:11434/v1/systemone"
+pdfgyeol.apikey = None
+pdfgyeol.model = "nimble"
+document = pdfgyeol.parse_pdf("notes.pdf")
+```
+
+`pdfgyeol.host = None`으로 모듈의 제공자 선택을 해제한다. `decision_config=pdfgyeol.DecisionConfig(enabled=False)`를 넘기면 해당 호출에서 Decision을 끈다. 모듈 또는 `from_host()`에 잘못된 URL을 지정하거나 필수 키를 빠뜨리면 `ValueError`가 발생한다.
+
+### 호출별 설정과 CLI
+
+스레드나 요청마다 독립 설정이 필요하면 `DecisionClient.from_host()`로 제공자를 만든 다음, `provider`와 `DecisionConfig(enabled=True)`를 함께 넘긴다. 호출에 넘긴 제공자는 모듈에서 선택한 제공자보다 우선한다. 같은 방법으로 `resolve_page()`에도 명시적 제공자를 넘길 수 있다.
+
+```python
+import os
+from pdfgyeol import DecisionClient, DecisionConfig, parse_pdf
+
+provider = DecisionClient.from_host("openai", apikey=os.environ["OPENAI_API_KEY"])
+document = parse_pdf(
+    "notes.pdf",
+    decision_config=DecisionConfig(enabled=True),
+    provider=provider,
+)
+```
+
+CLI의 `--decision`과 제공자를 지정하지 않은 기존 Python 활성화 방식은 채점이 필요한 시점에 `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `DECISION_MODEL_DEPLOYMENT`를 읽는다. 배포명 기본값은 `Decision-1.1`이다. 환경 설정이 없으면 `not_configured`로 보류한다. `DecisionClient(endpoint=..., api_key=..., model=...)`로 Azure 제공자를 직접 만들 수도 있다. `.env`는 자동으로 찾거나 읽지 않는다.
+
+### 전송 범위와 요청 형식
+
+서로 다른 유효 후보가 발견된 범위에만 채점 요청을 보낸다. System One 요청은 `model`, 문자열 `state`, 이름별 `questions`를 보낸다. 각 질문에 `type="noul"`과 `instructions`를 지정하며 응답의 `answers.candidate_N.noul` 수치를 사용한다. OpenAI Decisions 요청은 같은 상태를 `input`으로 보내고 `questions` 목록에 `type="predicate"`, `name`, `instructions`를 지정한다. 응답의 `answers` 목록에서 후보 이름별 `probability`를 사용한다.
+
+리다이렉트는 거부한다. 대안별로 한 번 요청하고 타임아웃·429·5xx 등 실패 시 재시도 없이 기본 기하 순서를 유지한다. 키, `endpoint`, `model`은 클라이언트 `repr`에서 제외하고 예외 본문은 판정 기록에 저장하지 않는다.
 
 상태에는 해당 후보의 영역 ID·좌표·제한된 줄 발췌·후보별 ID 순열만 들어간다. 활성 영역 밖의 제목·인접 셀·페이지 나머지·문서 이름·다른 페이지는 보내지 않는다. 표가 후보 영역이면 해당 표 하위 구조만 담는다. 기본 상한은 전체 발췌 1,600자, 줄별 160자, 하위 영역 64개, 줄 128개, UTF-8 상태 32,768바이트다. 잘린 발췌는 `truncated`로 표시한다. 영역·줄·바이트 예산을 넘거나 원문 좌표가 활성 상자를 벗어나면 호출을 보류한다. `DecisionConfig`에서 양의 정수 상한을 조절할 수 있다. 응답 본문도 65,536바이트로 제한한다.
 
@@ -63,7 +106,7 @@ result = resolve_page(page, local, config=experimental)
 
 선택 시 해당 범위의 부분 순서만 교체하고 다시 원문 ID 보존을 검사한다. 중첩 셀의 선택은 부모 셀·형제 셀·표 좌표·페이지 루트 순서를 바꾸지 않는다. 무효 대안이나 판정 실패 시 입력 기하 결과가 남으며 다른 유효한 대안은 독립적으로 처리한다.
 
-`DecisionRecord`는 대안·범위 ID, 후보 이름, 기본·선택 인덱스, 검증된 점수, 제공자 클래스·모델 배포명, 보낸 상태의 SHA-256, 임곗값, 결과·사유를 기록한다. 원문 발췌나 비밀 설정은 기록하지 않는다. 후보별 실제 ID 순열은 `result.layout.alternatives`에 유지된다.
+`DecisionRecord`는 대안·범위 ID, 후보 이름, 기본·선택 인덱스, 검증된 점수, 제공자·모델 또는 배포명, 보낸 상태의 SHA-256, 임곗값, 결과·사유를 기록한다. 호스트를 선택한 제공자는 `jev`, `openai`, `ms`, `custom` 중 하나로 기록되며 `local`은 `custom`의 별칭이다. 기존 생성자와 직접 구현한 제공자는 클래스 이름으로 기록된다. 원문 발췌나 비밀 설정은 기록하지 않는다. 후보별 실제 ID 순열은 `result.layout.alternatives`에 유지된다.
 
 | outcome | 의미 | 대표 reason |
 |---|---|---|
