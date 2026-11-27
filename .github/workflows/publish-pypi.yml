@@ -97,8 +97,9 @@ jobs:
           python -m twine check --strict wheels/*.whl
           abi3audit --strict --summary wheels/*.whl
           tar xzf source/*.tar.gz
-          python -m pytest -q pdfgyeol-*/tests
-          python pdfgyeol-*/examples/make_riverside_notes.py notes.pdf
+          cd pdfgyeol-*/
+          python -m pytest -q tests
+          python examples/make_riverside_notes.py notes.pdf
           python - <<'PY'
           from unittest.mock import patch
           from pdfgyeol import _native, parse_pdf
