@@ -41,6 +41,10 @@ Python에서는 `parse_pdf("input.pdf", decision_config=DecisionConfig(enabled=T
 
 출력 품질은 [레이아웃 규칙의 한계](layout.md#검증과-한계)를 따릅니다. 이미지 전용 페이지는 이미지 위치와 함께 표시되며 OCR 텍스트는 생성되지 않습니다. 문서 순서와 표의 정확도는 원본의 배치에 따라 달라집니다.
 
+## 보험 약관
+
+`parse_pdf("input.pdf", insurance=True)` 또는 `pdfgyeol input.pdf --insurance`로 조·특약·별표의 소속을 표시합니다. 이 옵션은 최종 읽기 순서에서 로컬로 동작하며 최상위 `insurance` 필드를 추가합니다. [보험 옵션과 JSON 참조 형식](insurance.md)
+
 ## 검증
 
 테스트 환경에서 `python -m pytest -q`를 실행합니다. 배포본 검사는 `.[test]`와 `build`를 설치한 개발 환경에서 다음과 같이 실행할 수 있습니다. 검사용 인터프리터에 맞는 wheelhouse를 미리 준비한 뒤 인덱스 접근 없이 각 배포본을 새 가상 환경에 설치합니다.

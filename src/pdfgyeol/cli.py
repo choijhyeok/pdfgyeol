@@ -56,6 +56,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("input", type=Path, help="local PDF path")
     parser.add_argument("-o", "--output", type=Path, help="new JSON file; parent must exist (default: stdout)")
     parser.add_argument("--decision", action="store_true", help="opt in to bounded remote Decision scoring")
+    parser.add_argument("--insurance", action="store_true", help="annotate Korean insurance sections locally")
     args = parser.parse_args(argv)
     try:
         if not args.input.is_file():
@@ -63,7 +64,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         if args.output is not None:
             _check_output(args.input, args.output)
-        document = parse_pdf(args.input, decision_config=DecisionConfig(enabled=args.decision))
+        document = parse_pdf(args.input, decision_config=DecisionConfig(enabled=args.decision),
+                             insurance=args.insurance)
         data = document.to_json()
         if args.output is None:
             # Serialize fully before writing. Explicit UTF-8 even under ASCII locale.

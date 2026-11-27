@@ -5,6 +5,7 @@ from .decision import (
     DecisionClient, DecisionConfig, DecisionProvider, DecisionRecord, DecisionResult, resolve_page,
 )
 from .extraction import extract_pdf
+from .insurance import InsuranceAnnotations, InsuranceSection, InsuranceSpan
 from .layout import infer_page, iter_layout
 from .layout_models import (
     LayoutConfig, PageLayout, ReadingAlternative, ReadingCandidate, Region,
@@ -29,4 +30,5 @@ __all__ = [
     "LayoutConfig", "PageLayout", "ReadingAlternative", "ReadingCandidate", "Region",
     "Table", "TableCell", "TableRow", "TextLine", "infer_page", "iter_layout",
     "DecisionClient", "DecisionConfig", "DecisionProvider", "DecisionRecord", "DecisionResult", "resolve_page",
+    "InsuranceAnnotations", "InsuranceSection", "InsuranceSpan",
 ]
