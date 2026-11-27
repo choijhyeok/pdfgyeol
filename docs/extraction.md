@@ -23,6 +23,7 @@ for page in document.pages:
 - 반환값은 타입이 명시된 불변 dataclass `Document`, `Page`, `TextFragment`, `TextStyle`, `VectorEvidence`, `ImageEvidence`다. 컬렉션은 tuple이며 외부 PDF 객체나 열린 파일에 의존하지 않는다. `py.typed`를 포함한다.
 - 문서 ID는 `pdfgyeol:v1:<파일 SHA-256>`, 페이지 ID는 그 뒤 `:p000001` 형식이다. 객체 ID는 페이지 ID 뒤 종류와 0부터 시작하는 원문 인덱스다. `source_index`는 글리프·이미지·각 벡터 종류별 pdfplumber 목록 인덱스다. `page_number`는 1부터 시작한다. 경로를 바꿔도 같은 바이트는 같은 ID를 얻는다. 바이트가 달라지면 모든 ID가 달라진다.
 - 같은 파일과 같은 파서 버전에서 ID와 순서를 재현한다. 파서 업그레이드 간 글리프 분해와 순서 호환은 보장하지 않으며 `extractor_version`에 pdfplumber와 pdfminer.six 버전을 기록한다. 장기 재현에는 환경 의존성 버전도 고정해야 한다.
+- pdfplumber 0.11.11과 pdfminer.six 20260107 조합에서는 일반 글리프에서 원문 모델에 필요한 속성만 읽는다. 바이트 인코딩 글꼴 이름, 벡터, 이미지, 다른 라이브러리 버전 조합은 pdfplumber의 기본 객체 변환을 사용한다.
 - `TextFragment` 하나는 `page.chars` 항목 하나다. 한 항목의 `text`가 여러 코드포인트이거나 공백이어도 그대로 보존한다. 정규화·중복 제거·공백 제거·단어 추출·위치 정렬을 하지 않는다. 겹쳐 그린 동일 글자도 별개 원문 ID를 갖는다.
 - `fragments` 순서는 pdfplumber의 원문 순서이며 사람이 읽는 순서를 뜻하지 않는다. 공백·개행을 추정해 삽입하지 않는다. 글리프 사이 간격과 줄 구조는 좌표로 분석해야 한다. 원문 누락·중복 보장은 pdfplumber가 노출한 항목과의 일대일 대응이며 PDF에 보이는 모든 문자의 정확한 해독을 보장하지 않는다.
 

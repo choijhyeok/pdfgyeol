@@ -4,14 +4,47 @@ from hashlib import sha256
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
+from unicodedata import normalize
 
 import pdfplumber
+from pdfminer.layout import LTChar, LTItem
 from pdfplumber.page import Page as PDFPage
 
 from .models import (
     BBox, Color, Document, ImageEvidence, Page, PageKind, PathSegment, PatternColor,
     TextFragment, TextStyle, VectorEvidence, VectorKind,
 )
+
+
+class _ExtractionPage(PDFPage):
+    """Project the LTChar fields this extractor uses during pdfplumber's layout walk."""
+
+    def process_object(self, obj: LTItem) -> dict[str, Any]:
+        if type(obj) is not LTChar or not isinstance(obj.fontname, str):
+            return super().process_object(obj)
+
+        media_x, media_top = self.mediabox[:2]
+        height = self.height
+        text = obj.get_text()
+        if self.pdf.unicode_norm is not None:
+            text = normalize(self.pdf.unicode_norm, text)
+        stroke, fill = obj.graphicstate.scolor, obj.graphicstate.ncolor
+        # Match Page.process_object's arithmetic order before _bbox rebases the result.
+        return {
+            "object_type": "char",
+            "text": text,
+            "fontname": obj.fontname,
+            "size": obj.size,
+            "x0": obj.x0 + media_x if media_x != 0 else obj.x0,
+            "x1": obj.x1 + media_x if media_x != 0 else obj.x1,
+            "top": (height - obj.y1) + media_top,
+            "bottom": (height - obj.y0) + media_top,
+            "stroking_color": stroke if isinstance(stroke, tuple) else (stroke,),
+            "non_stroking_color": fill if isinstance(fill, tuple) else (fill,),
+            "matrix": obj.matrix,
+            "adv": obj.adv,
+            "upright": obj.upright,
+        }
 
 
 def _color(value: Any) -> Color:
@@ -134,13 +167,24 @@ def extract_pdf(path: str | Path, *, password: str | None = None) -> Document:
         checksum = digest.hexdigest()
         document_id = f"pdfgyeol:v1:{checksum}"
         stream.seek(0)
+        plumber_version = version("pdfplumber")
+        miner_version = version("pdfminer.six")
+        # The LTChar projection was checked against these versions. An upgrade
+        # can use native object processing until its character fields are audited.
+        project_chars = (plumber_version, miner_version) == ("0.11.11", "20260107")
         with pdfplumber.open(stream, password=password) as pdf:
             pages = []
             for source in pdf.pages:
-                pages.append(_extract_page(source, document_id))
-                source.close()
+                if project_chars:
+                    source = _ExtractionPage(
+                        pdf, source.page_obj, source.page_number, source.initial_doctop,
+                    )
+                try:
+                    pages.append(_extract_page(source, document_id))
+                finally:
+                    source.close()
     return Document(
         id=document_id, sha256=checksum, schema_version="1",
-        extractor_version=f"pdfplumber/{version('pdfplumber')};pdfminer.six/{version('pdfminer.six')}",
+        extractor_version=f"pdfplumber/{plumber_version};pdfminer.six/{miner_version}",
         pages=tuple(pages),
     )
