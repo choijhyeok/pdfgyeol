@@ -19,6 +19,7 @@ from .models import (
 )
 
 _GLYPH_BATCH = 1024
+_LINE_BATCH = 1024
 
 
 class _ExtractionPage(PDFPage):
@@ -84,9 +85,45 @@ class _ExtractionPage(PDFPage):
 class _NativePage(_ExtractionPage):
     _project_lines = True
 
+    def _source_lines(
+        self, items: Sequence[LTItem], page_id: str,
+        geometry: tuple[float, float, float, float, float],
+    ) -> list[VectorEvidence] | None:
+        try:
+            from ._native import assemble_lines
+        except ImportError:
+            return None
+
+        constructors = (BBox, PathSegment, VectorEvidence, PatternColor)
+        lines: list[VectorEvidence] = []
+        batch: list[LTLine] = []
+
+        def flush() -> bool:
+            try:
+                records = assemble_lines(
+                    batch, page_id, self.page_number, len(lines), geometry, constructors,
+                )
+            except (AttributeError, IndexError, TypeError, OverflowError, ValueError):
+                return False
+            if records is None:
+                return False
+            lines.extend(records)
+            batch.clear()
+            return True
+
+        for item in items:
+            if type(item) is LTLine:
+                batch.append(item)
+                if len(batch) == _LINE_BATCH and not flush():
+                    # Discard prior line batches before projecting stock objects.
+                    return None
+        if batch and not flush():
+            return None
+        return lines
+
     def _source_objects(
         self, page_id: str, origin: tuple[float, float],
-    ) -> tuple[tuple[TextFragment, ...], dict[str, list[dict[str, Any]]]] | None:
+    ) -> tuple[tuple[TextFragment, ...], dict[str, list[dict[str, Any]]], list[VectorEvidence]] | None:
         if (settings.STRICT or self.pdf.laparams is not None
                 or self.pdf.unicode_norm is not None or hasattr(self, "_objects")):
             return None
@@ -128,15 +165,18 @@ class _NativePage(_ExtractionPage):
 
         # Delay stock object projection until every glyph batch was accepted.
         # An unsupported glyph replays the page through the existing path.
+        lines = self._source_lines(remaining, page_id, geometry)
         objects: dict[str, list[dict[str, Any]]] = {}
         for item in remaining:
+            if lines is not None and type(item) is LTLine:
+                continue
             obj = self.process_object(item)
             kind = obj["object_type"]
-            if kind == "char":
+            if kind == "char" or (lines is not None and kind == "line"):
                 return None
             if kind != "anno":
                 objects.setdefault(kind, []).append(obj)
-        return tuple(fragments), objects
+        return tuple(fragments), objects, lines if lines is not None else []
 
     @property
     def layout(self) -> LTPage:
@@ -226,9 +266,9 @@ def _extract_page(source: PDFPage, document_id: str) -> Page:
             for index, char in enumerate(source.chars)
         )
         objects = source.objects
+        vectors: list[VectorEvidence] = []
     else:
-        fragments, objects = native
-    vectors = []
+        fragments, objects, vectors = native
     # Keep native shapes once: page.edges would duplicate rect/curve geometry.
     object_groups: tuple[tuple[VectorKind, list[dict[str, Any]]], ...] = (
         ("line", objects.get("line", [])), ("rect", objects.get("rect", [])),
