@@ -18,10 +18,14 @@ from .models import (
 
 
 class _ExtractionPage(PDFPage):
-    """Project the LTChar fields this extractor uses during pdfplumber's layout walk."""
+    """Project the fields this extractor uses during pdfplumber's layout walk."""
+
+    _project_lines = False
 
     def process_object(self, obj: LTItem) -> dict[str, Any]:
         if type(obj) is not LTChar or not isinstance(obj.fontname, str):
+            if type(obj) is LTLine and self._project_lines and obj.original_path is not None:
+                return self._line_object(obj)
             return super().process_object(obj)
 
         media_x, media_top = self.mediabox[:2]
@@ -47,12 +51,7 @@ class _ExtractionPage(PDFPage):
             "upright": obj.upright,
         }
 
-
-class _NativePage(_ExtractionPage):
-    def process_object(self, obj: LTItem) -> dict[str, Any]:
-        if type(obj) is not LTLine or obj.original_path is None:
-            return super().process_object(obj)
-
+    def _line_object(self, obj: LTLine) -> dict[str, Any]:
         media_x, media_top = self.mediabox[:2]
         height = self.height
         # pdfplumber's path contains nested points despite the LTLine annotation.
@@ -76,6 +75,10 @@ class _NativePage(_ExtractionPage):
             "non_stroking_color": obj.non_stroking_color,
             "dash": obj.dashing_style,
         }
+
+
+class _NativePage(_ExtractionPage):
+    _project_lines = True
 
     @property
     def layout(self) -> LTPage:
