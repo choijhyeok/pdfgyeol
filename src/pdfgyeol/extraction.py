@@ -1,5 +1,6 @@
 """Lossless-to-pdfplumber character extraction, without layout inference or OCR."""
 
+from collections.abc import Iterator, Sequence
 from hashlib import sha256
 from importlib.metadata import version
 from pathlib import Path
@@ -7,7 +8,8 @@ from typing import Any, cast
 from unicodedata import normalize
 
 import pdfplumber
-from pdfminer.layout import LTChar, LTItem, LTLine, LTPage
+from pdfminer import settings
+from pdfminer.layout import LTChar, LTContainer, LTItem, LTLine, LTPage
 from pdfminer.utils import Point
 from pdfplumber.page import Page as PDFPage
 
@@ -15,6 +17,8 @@ from .models import (
     BBox, Color, Document, ImageEvidence, Page, PageKind, PathSegment, PatternColor,
     TextFragment, TextStyle, VectorEvidence, VectorKind,
 )
+
+_GLYPH_BATCH = 1024
 
 
 class _ExtractionPage(PDFPage):
@@ -80,6 +84,60 @@ class _ExtractionPage(PDFPage):
 class _NativePage(_ExtractionPage):
     _project_lines = True
 
+    def _source_objects(
+        self, page_id: str, origin: tuple[float, float],
+    ) -> tuple[tuple[TextFragment, ...], dict[str, list[dict[str, Any]]]] | None:
+        if (settings.STRICT or self.pdf.laparams is not None
+                or self.pdf.unicode_norm is not None or hasattr(self, "_objects")):
+            return None
+        try:
+            from ._native import assemble_glyphs
+        except ImportError:
+            return None
+
+        geometry = (*self.mediabox[:2], self.height, *origin)
+        constructors = (BBox, TextStyle, TextFragment, PatternColor)
+        remaining = []
+        fragments: list[TextFragment] = []
+        batch: list[LTChar] = []
+
+        def flush() -> bool:
+            try:
+                records = assemble_glyphs(
+                    batch, page_id, self.page_number, len(fragments), geometry, constructors,
+                )
+            except (AttributeError, TypeError, OverflowError):
+                return False
+            if records is None:
+                return False
+            fragments.extend(records)
+            batch.clear()
+            return True
+
+        for item in _layout_leaves(self.layout._objs):
+            if type(item) is LTChar:
+                batch.append(item)
+                if len(batch) == _GLYPH_BATCH and not flush():
+                    return None
+            elif isinstance(item, LTChar):
+                return None
+            else:
+                remaining.append(item)
+        if batch and not flush():
+            return None
+
+        # Delay stock object projection until every glyph batch was accepted.
+        # An unsupported glyph replays the page through the existing path.
+        objects: dict[str, list[dict[str, Any]]] = {}
+        for item in remaining:
+            obj = self.process_object(item)
+            kind = obj["object_type"]
+            if kind == "char":
+                return None
+            if kind != "anno":
+                objects.setdefault(kind, []).append(obj)
+        return tuple(fragments), objects
+
     @property
     def layout(self) -> LTPage:
         if not hasattr(self, "_layout"):
@@ -136,33 +194,48 @@ def _points(points: Any, origin: tuple[float, float]) -> tuple[tuple[float, floa
     return tuple((float(px) - x, float(py) - y) for px, py in points)
 
 
+def _layout_leaves(items: Sequence[LTItem]) -> Iterator[LTItem]:
+    # The audited pdfplumber walk skips containers when LAParams are absent.
+    for item in items:
+        if isinstance(item, LTContainer):
+            yield from _layout_leaves(item._objs)
+        else:
+            yield item
+
+
 def _extract_page(source: PDFPage, document_id: str) -> Page:
     number = source.page_number
     page_id = f"{document_id}:p{number:06d}"
     origin = (source.bbox[0], source.bbox[1])
-    fragments = tuple(
-        TextFragment(
-            id=f"{page_id}:c{index:08d}", page_id=page_id,
-            page_number=number, source_index=index, text=char["text"],
-            bbox=_bbox(char, origin),
-            style=TextStyle(
-                font_name=char["fontname"], size=float(char["size"]),
-                upright=bool(char["upright"]),
-                stroking_color=_color(char.get("stroking_color")),
-                non_stroking_color=_color(char.get("non_stroking_color")),
-            ),
-            source_matrix=tuple(float(value) for value in char["matrix"]),
-            advance=float(char["adv"]),
+    native = source._source_objects(page_id, origin) if isinstance(source, _NativePage) else None
+    if native is None:
+        fragments = tuple(
+            TextFragment(
+                id=f"{page_id}:c{index:08d}", page_id=page_id,
+                page_number=number, source_index=index, text=char["text"],
+                bbox=_bbox(char, origin),
+                style=TextStyle(
+                    font_name=char["fontname"], size=float(char["size"]),
+                    upright=bool(char["upright"]),
+                    stroking_color=_color(char.get("stroking_color")),
+                    non_stroking_color=_color(char.get("non_stroking_color")),
+                ),
+                source_matrix=tuple(float(value) for value in char["matrix"]),
+                advance=float(char["adv"]),
+            )
+            for index, char in enumerate(source.chars)
         )
-        for index, char in enumerate(source.chars)
-    )
+        objects = source.objects
+    else:
+        fragments, objects = native
     vectors = []
     # Keep native shapes once: page.edges would duplicate rect/curve geometry.
     object_groups: tuple[tuple[VectorKind, list[dict[str, Any]]], ...] = (
-        ("line", source.lines), ("rect", source.rects), ("curve", source.curves),
+        ("line", objects.get("line", [])), ("rect", objects.get("rect", [])),
+        ("curve", objects.get("curve", [])),
     )
-    for kind, objects in object_groups:
-        for index, obj in enumerate(objects):
+    for kind, shapes in object_groups:
+        for index, obj in enumerate(shapes):
             dash = obj.get("dash")
             vectors.append(VectorEvidence(
                 id=f"{page_id}:{kind}{index:08d}", page_id=page_id,
@@ -187,7 +260,7 @@ def _extract_page(source: PDFPage, document_id: str) -> Page:
             source_size=(int(obj["srcsize"][0]), int(obj["srcsize"][1])),
             bits=obj.get("bits"), image_mask=bool(obj.get("imagemask", False)),
         )
-        for index, obj in enumerate(source.images)
+        for index, obj in enumerate(objects.get("image", []))
     )
     if fragments:
         page_kind = PageKind.TEXT

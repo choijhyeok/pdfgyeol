@@ -5,6 +5,7 @@ use std::str;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyString};
 
+mod glyphs;
 mod text;
 mod vector;
 
@@ -395,5 +396,6 @@ fn parse_content<'py>(
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(parse_content, module)?)?;
     module.add_function(wrap_pyfunction!(text::horizontal_glyphs, module)?)?;
+    module.add_function(wrap_pyfunction!(glyphs::assemble_glyphs, module)?)?;
     module.add_function(wrap_pyfunction!(vector::straight_line, module)?)
 }
