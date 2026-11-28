@@ -183,10 +183,12 @@ def _stream(content: bytes) -> PDFStream:
     (b"q 1 0 0 1 -0.0 5 cm BT -1 0 -0.0 1 -0.0 7 Tm [(A) 5 ( B)] TJ ET Q "
      b"BT 1 -0.0 0 1 -0.0 0 Tm ET", [], True),
     (b"q 27 Unknown 2 w Q 4 6", [], False),
+    (b"1 cm q 1 0 0 1 7 2 cm Q", [], False),
     (b"1 w 2 3 m 4 l w", [8], None),
     (b"1 0 0 rg .5 scn 2 w [(partial)", [], False),
     (b"/DeviceRGB cs .1 .2 .3 scn /DeviceRGB CS .4 .5 .6 SCN 5 w", [], False),
-], ids=["matrix-and-state", "unknown-and-trailing", "dirty-and-short", "partial-lex", "variable-color"])
+], ids=["matrix-and-state", "unknown-and-trailing", "short-cm", "dirty-and-short",
+        "partial-lex", "variable-color"])
 def test_dispatch_and_stack_fallback_match_pdfminer(
     content: bytes, initial: list[int], native_plan: bool | None, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
