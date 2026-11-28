@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import Sequence
-from typing import Any, Callable, cast
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 from pdfminer import settings
 from pdfminer.layout import LTChar, LTLine
@@ -17,6 +17,9 @@ from pdfminer.psparser import KWD, LIT
 from pdfminer.utils import Matrix, PathSegment, Point, Rect
 from pdfplumber.page import PDFPageAggregatorWithMarkedContent
 
+if TYPE_CHECKING:
+    from ._native import ContentDispatch
+
 _parse_content: Callable[
     [bytes, Callable[[str | bytes], Any], Callable[[bytes], Any]],
     list[tuple[list[Any], str | None]] | None,
@@ -27,6 +30,18 @@ except ImportError:
     _parse_content = None
 else:
     _parse_content = parse_content
+
+_Operator = tuple[Callable[..., None], int]
+_prepare_dispatch: Callable[
+    [bytes, Callable[[str | bytes], Any], Callable[[bytes], Any], PDFPageInterpreter, dict[str, _Operator]],
+    "ContentDispatch | None",
+] | None
+try:
+    from ._native import prepare_dispatch
+except ImportError:
+    _prepare_dispatch = None
+else:
+    _prepare_dispatch = prepare_dispatch
 
 _Glyph = tuple[float, str, bool]
 _PositionedGlyph = tuple[str, float, float, float, Rect, float, float]
@@ -63,7 +78,7 @@ _TEXT_LOGGERS = (logging.getLogger("pdfminer.cmapdb"), logging.getLogger("pdfmin
 _HORIZONTAL_FONTS = (PDFCIDFont, PDFTrueTypeFont, PDFType1Font)
 _MAX_TEXT_RUN = 4096
 _MAX_CACHED_GLYPHS = 4096
-_OPERATORS = {
+_OPERATORS: dict[str, _Operator] = {
     name.removeprefix("do_").replace("_a", "*").replace("_w", '"').replace("_q", "'"):
         (method, method.__code__.co_argcount - 1)
     for name, method in vars(PDFPageInterpreter).items()
@@ -72,10 +87,11 @@ _OPERATORS = {
 
 
 class NativeInterpreter(PDFPageInterpreter):
-    """Feed batched operands to stock pdfminer operator handlers."""
+    """Dispatch bounded content streams to stock pdfminer operator handlers."""
 
     def execute(self, streams: Sequence[object]) -> None:
-        if (_parse_content is None or len(streams) != 1 or settings.STRICT
+        if (type(self) is not NativeInterpreter or _parse_content is None
+                or len(streams) != 1 or settings.STRICT
                 or any(logger.isEnabledFor(logging.DEBUG) for logger in _LOGGERS)):
             super().execute(streams)
             return
@@ -86,7 +102,20 @@ class NativeInterpreter(PDFPageInterpreter):
             super().execute(streams)
             return
 
-        ops = _parse_content(stream.get_data(), LIT, KWD)
+        data = stream.get_data()
+        # Audited handlers consume operands but never add to the stack. An
+        # initially empty stack stays empty if every arity matches, including
+        # zero-arity color handlers that pop their own operands.
+        if _prepare_dispatch is not None and not self.argstack:
+            dispatch = _prepare_dispatch(data, LIT, KWD, self, _OPERATORS)
+            if dispatch is not None:
+                self.stream_ids.clear()
+                self.stream_ids.add(stream.objid)
+                dispatch.run()
+                return
+
+        # A declined plan has not invoked any handlers or changed stream IDs.
+        ops = _parse_content(data, LIT, KWD)
         if ops is None:
             super().execute(streams)
             return
@@ -96,15 +125,18 @@ class NativeInterpreter(PDFPageInterpreter):
         # Match PDFPageInterpreter.execute's tolerant operator dispatch semantics.
         # In particular, unknown operators leave the existing operand stack intact.
         for operands, name in ops:
-            self.argstack.extend(operands)
-            if name is None:
+            operator = _OPERATORS.get(name) if name is not None else None
+            if operator is None:
+                self.argstack.extend(operands)
                 continue
-            operator = _OPERATORS.get(name)
-            if operator is not None:
-                method, arity = operator
-                args = self.pop(arity)
-                if len(args) == arity:
-                    method(self, *args)
+            method, arity = operator
+            if not self.argstack and len(operands) == arity:
+                method(self, *operands)
+                continue
+            self.argstack.extend(operands)
+            args = self.pop(arity)
+            if len(args) == arity:
+                method(self, *args)
 
 
 class NativePageAggregator(PDFPageAggregatorWithMarkedContent):

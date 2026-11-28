@@ -104,9 +104,16 @@ jobs:
           from unittest.mock import patch
           from pdfgyeol import _native, parse_pdf
 
-          with patch("pdfgyeol._native_extraction._parse_content", wraps=_native.parse_content) as lexer:
+          dispatched = []
+          def track_dispatch(*args):
+              plan = _native.prepare_dispatch(*args)
+              if plan is not None:
+                  dispatched.append(len(plan))
+              return plan
+
+          with patch("pdfgyeol._native_extraction._prepare_dispatch", track_dispatch):
               accelerated = parse_pdf("notes.pdf").to_json(indent=None)
-              assert lexer.called, "The parser did not call the native extension"
+              assert sum(dispatched) > 0, "The parser did not dispatch operators from Rust"
           with patch("pdfgyeol._native_extraction._parse_content", None):
               assert accelerated == parse_pdf("notes.pdf").to_json(indent=None)
           PY

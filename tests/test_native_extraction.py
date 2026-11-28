@@ -11,10 +11,13 @@ from zlib import compress
 
 import pdfplumber
 import pytest
+from pdfminer import settings
 from pdfminer.layout import LTChar
-from pdfminer.pdfinterp import PDFContentParser
+from pdfminer.pdfdevice import PDFDevice
+from pdfminer.pdfinterp import PDFContentParser, PDFInterpreterError, PDFPageInterpreter, PDFResourceManager
 from pdfminer.pdftypes import PDFStream
 from pdfminer.psparser import KWD, LIT, PSEOF, PSKeyword, keyword_name
+from pdfminer.utils import MATRIX_IDENTITY
 
 from pdfgyeol import extract_pdf
 from pdfgyeol.extraction import _NativePage, _extract_page
@@ -129,13 +132,20 @@ def test_native_and_fallback_content_preserve_full_extraction(
     native = pytest.importorskip("pdfgyeol._native")
     from pdfgyeol import _native_extraction
 
-    attempts: list[tuple[bytes, bool]] = []
+    attempts: list[tuple[bytes, int | None]] = []
+    lexed: list[tuple[bytes, bool]] = []
+
+    def track_plan(data: bytes, *args):
+        plan = native.prepare_dispatch(data, *args)
+        attempts.append((data, len(plan) if plan is not None else None))
+        return plan
 
     def track(data: bytes, literal, keyword):
         result = native.parse_content(data, literal, keyword)
-        attempts.append((data, result is not None))
+        lexed.append((data, result is not None))
         return result
 
+    monkeypatch.setattr(_native_extraction, "_prepare_dispatch", track_plan)
     monkeypatch.setattr(_native_extraction, "_parse_content", track)
     document = extract_pdf(native_content_pdf)
     assert dumps([asdict(page) for page in document.pages]) == _stock_page_json(
@@ -148,9 +158,112 @@ def test_native_and_fallback_content_preserve_full_extraction(
     expected_attempts = [
         (b"(Before)", True), (b"(Outer)", True), (b"(Inner)", False), (OPERAND_CONTENT, True),
     ]
-    for (data, accepted), (marker, expected) in zip(attempts, expected_attempts, strict=True):
+    for (data, size), (marker, expected) in zip(attempts, expected_attempts, strict=True):
         assert marker in data
-        assert accepted is expected
+        assert (size is not None) is expected
+    assert len(lexed) == 1 and b"(Inner)" in lexed[0][0] and not lexed[0][1]
+
+
+def _interpreter(cls):
+    resources = PDFResourceManager()
+    device = PDFDevice(resources)
+    interpreter = cls(resources, device)
+    interpreter.init_resources({})
+    interpreter.init_state(MATRIX_IDENTITY)
+    return interpreter
+
+
+def _stream(content: bytes) -> PDFStream:
+    stream = PDFStream({}, content)
+    stream.set_objid(1, 0)
+    return stream
+
+
+@pytest.mark.parametrize(("content", "initial", "native_plan"), [
+    (b"q 1 0 0 1 -0.0 5 cm BT -1 0 -0.0 1 -0.0 7 Tm [(A) 5 ( B)] TJ ET Q "
+     b"BT 1 -0.0 0 1 -0.0 0 Tm ET", [], True),
+    (b"q 27 Unknown 2 w Q 4 6", [], False),
+    (b"1 w 2 3 m 4 l w", [8], None),
+    (b"1 0 0 rg .5 scn 2 w [(partial)", [], False),
+    (b"/DeviceRGB cs .1 .2 .3 scn /DeviceRGB CS .4 .5 .6 SCN 5 w", [], False),
+], ids=["matrix-and-state", "unknown-and-trailing", "dirty-and-short", "partial-lex", "variable-color"])
+def test_dispatch_and_stack_fallback_match_pdfminer(
+    content: bytes, initial: list[int], native_plan: bool | None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    native = pytest.importorskip("pdfgyeol._native")
+    from pdfgyeol import _native_extraction as ne
+
+    plans = []
+
+    def track(*args):
+        result = native.prepare_dispatch(*args)
+        plans.append(result is not None)
+        return result
+
+    monkeypatch.setattr(ne, "_prepare_dispatch", track)
+    actual = _interpreter(ne.NativeInterpreter)
+    expected = _interpreter(PDFPageInterpreter)
+    for interpreter in (actual, expected):
+        interpreter.argstack.extend(initial)
+        interpreter.execute([_stream(content)])
+    assert plans == ([] if native_plan is None else [native_plan])
+    for field in ("ctm", "argstack", "curpath", "stream_ids", "gstack"):
+        assert _typed(getattr(actual, field)) == _typed(getattr(expected, field))
+    assert _typed(vars(actual.textstate)) == _typed(vars(expected.textstate))
+    assert _typed(vars(actual.graphicstate)) == _typed(vars(expected.graphicstate))
+
+
+def test_dispatch_does_not_retry_handler_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("pdfgyeol._native")
+    from pdfgyeol import _native_extraction as ne
+
+    def unexpected_lex(*args):
+        pytest.fail("already executing an exact-arity stream")
+
+    monkeypatch.setattr(ne, "_parse_content", unexpected_lex)
+    interpreter = _interpreter(ne.NativeInterpreter)
+    translations = []
+
+    def fail_on_second_transform(ctm):
+        translations.append(ctm[4])
+        if ctm[4] == 3:
+            raise ValueError("device rejected transform")
+
+    interpreter.device.set_ctm = fail_on_second_transform
+    with pytest.raises(ValueError, match="device rejected transform"):
+        interpreter.execute([_stream(b"1 0 0 1 1 0 cm 1 0 0 1 2 0 cm 1 0 0 1 4 0 cm")])
+    assert translations == [1, 3]
+    assert interpreter.stream_ids == {1}
+
+
+def test_dispatch_defers_custom_strict_and_debug_execution(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    pytest.importorskip("pdfgyeol._native")
+    from pdfgyeol import _native_extraction as ne
+
+    class Custom(ne.NativeInterpreter):
+        def do_Custom(self, value):
+            self.push(value)
+
+        def do_w(self, linewidth):
+            super().do_w(linewidth + 1)
+
+    def unexpected_dispatch(*args):
+        pytest.fail("dispatch attempted despite customized or diagnostic execution")
+
+    monkeypatch.setattr(ne, "_prepare_dispatch", unexpected_dispatch)
+    custom = _interpreter(Custom)
+    custom.execute([_stream(b"7 Custom w")])
+    assert custom.graphicstate.linewidth == 8
+    exact = _interpreter(ne.NativeInterpreter)
+    with monkeypatch.context() as patch:
+        patch.setattr(settings, "STRICT", True)
+        with pytest.raises(PDFInterpreterError, match="Unknown operator"):
+            exact.execute([_stream(b"Unknown")])
+    with caplog.at_level(logging.DEBUG, logger="pdfminer.pdfinterp"):
+        exact.execute([_stream(b"5 w")])
+    assert any(record.getMessage() == "exec: w [5]" for record in caplog.records)
 
 
 def test_extraction_with_unavailable_extension(native_content_pdf: Path) -> None:

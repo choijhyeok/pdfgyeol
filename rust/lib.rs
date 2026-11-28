@@ -1,9 +1,9 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 use std::str;
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PyString};
+use pyo3::types::{PyBytes, PyDict, PyList, PyString, PyTuple};
 
 mod glyphs;
 mod lines;
@@ -62,6 +62,24 @@ fn nibble(byte: u8) -> Option<u8> {
 }
 
 impl<'data, 'py> ContentParser<'data, 'py> {
+    fn new(
+        py: Python<'py>,
+        data: &'data [u8],
+        literal: &'data Bound<'py, PyAny>,
+        keyword: &'data Bound<'py, PyAny>,
+    ) -> Self {
+        Self {
+            data,
+            pos: 0,
+            tokens: 0,
+            py,
+            literal,
+            keyword,
+            literals: HashMap::new(),
+            operators: HashMap::new(),
+        }
+    }
+
     fn peek(&self) -> Option<u8> {
         self.data.get(self.pos).copied()
     }
@@ -362,6 +380,51 @@ impl<'data, 'py> ContentParser<'data, 'py> {
             }
         }
     }
+
+    fn prepare_dispatch(
+        mut self,
+        interpreter: &Bound<'py, PyAny>,
+        operators: &Bound<'py, PyDict>,
+    ) -> ParseResult<ContentDispatch> {
+        let mut methods = HashMap::new();
+        let mut instructions = Vec::new();
+        let mut args = vec![interpreter.clone()];
+        let no_operands = PyTuple::new(self.py, [interpreter])?;
+        loop {
+            self.skip_space();
+            if self.pos == self.data.len() {
+                if args.len() != 1 {
+                    return Err(ParseError::Unsupported);
+                }
+                return Ok(ContentDispatch { instructions });
+            }
+            match self.token(0)? {
+                Token::Operand(value) => args.push(value),
+                Token::Keyword(word) => {
+                    let (method, arity) = match methods.entry(word) {
+                        Entry::Occupied(entry) => entry.into_mut(),
+                        Entry::Vacant(entry) => {
+                            let name = str::from_utf8(word).expect("ASCII keyword");
+                            let operator =
+                                operators.get_item(name)?.ok_or(ParseError::Unsupported)?;
+                            entry.insert(operator.extract::<(Bound<'py, PyAny>, usize)>()?)
+                        }
+                    };
+                    if args.len() - 1 != *arity {
+                        return Err(ParseError::Unsupported);
+                    }
+                    let args = if *arity == 0 {
+                        no_operands.clone()
+                    } else {
+                        let tuple = PyTuple::new(self.py, args.drain(..))?;
+                        args.push(interpreter.clone());
+                        tuple
+                    };
+                    instructions.push((method.clone().unbind(), args.unbind()));
+                }
+            }
+        }
+    }
 }
 
 /// Lex a bounded PDF content stream into (operands, operator) batches.
@@ -376,18 +439,47 @@ fn parse_content<'py>(
     if data.len() > MAX_STREAM_BYTES {
         return Ok(None);
     }
-    let parser = ContentParser {
-        data,
-        pos: 0,
-        tokens: 0,
-        py,
-        literal,
-        keyword,
-        literals: HashMap::new(),
-        operators: HashMap::new(),
-    };
-    match parser.parse() {
+    match ContentParser::new(py, data, literal, keyword).parse() {
         Ok(ops) => Ok(Some(ops)),
+        Err(ParseError::Unsupported) => Ok(None),
+        Err(ParseError::Python(error)) => Err(error),
+    }
+}
+
+#[pyclass(module = "pdfgyeol._native")]
+struct ContentDispatch {
+    instructions: Vec<(Py<PyAny>, Py<PyTuple>)>,
+}
+
+#[pymethods]
+impl ContentDispatch {
+    fn __len__(&self) -> usize {
+        self.instructions.len()
+    }
+
+    fn run(&mut self, py: Python<'_>) -> PyResult<()> {
+        for (method, args) in self.instructions.drain(..) {
+            method.bind(py).call1(args.into_bound(py))?;
+        }
+        Ok(())
+    }
+}
+
+/// Resolve an exact-arity stream before invoking any audited handlers.
+#[pyfunction]
+fn prepare_dispatch(
+    py: Python<'_>,
+    data: &[u8],
+    literal: &Bound<'_, PyAny>,
+    keyword: &Bound<'_, PyAny>,
+    interpreter: &Bound<'_, PyAny>,
+    operators: &Bound<'_, PyDict>,
+) -> PyResult<Option<ContentDispatch>> {
+    if data.len() > MAX_STREAM_BYTES {
+        return Ok(None);
+    }
+    match ContentParser::new(py, data, literal, keyword).prepare_dispatch(interpreter, operators) {
+        Ok(dispatch) => Ok(Some(dispatch)),
         Err(ParseError::Unsupported) => Ok(None),
         Err(ParseError::Python(error)) => Err(error),
     }
@@ -395,7 +487,9 @@ fn parse_content<'py>(
 
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<ContentDispatch>()?;
     module.add_function(wrap_pyfunction!(parse_content, module)?)?;
+    module.add_function(wrap_pyfunction!(prepare_dispatch, module)?)?;
     module.add_function(wrap_pyfunction!(text::horizontal_glyphs, module)?)?;
     module.add_function(wrap_pyfunction!(glyphs::assemble_glyphs, module)?)?;
     module.add_function(wrap_pyfunction!(lines::assemble_lines, module)?)?;

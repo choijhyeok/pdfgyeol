@@ -9,6 +9,18 @@ def parse_content(
     keyword: Callable[[bytes], Any],
 ) -> list[tuple[list[Any], str | None]] | None: ...
 
+class ContentDispatch:
+    def __len__(self) -> int: ...
+    def run(self) -> None: ...
+
+def prepare_dispatch(
+    data: bytes,
+    literal: Callable[[str | bytes], Any],
+    keyword: Callable[[bytes], Any],
+    interpreter: object,
+    operators: dict[str, tuple[Callable[..., None], int]],
+) -> ContentDispatch | None: ...
+
 def horizontal_glyphs(
     items: list[tuple[float, str, bool] | int | float],
     matrix: tuple[float, float, float, float, float, float],
