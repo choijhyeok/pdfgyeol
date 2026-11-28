@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from typing import Any
-from pdfminer.layout import LTChar
-from .models import BBox, PatternColor, TextFragment, TextStyle
+from pdfminer.layout import LTChar, LTLine
+from .models import BBox, PathSegment, PatternColor, TextFragment, TextStyle, VectorEvidence
 
 def parse_content(
     data: bytes,
@@ -42,3 +42,12 @@ def assemble_glyphs(
     geometry: tuple[float, float, float, float, float],
     constructors: tuple[type[BBox], type[TextStyle], type[TextFragment], type[PatternColor]],
 ) -> list[TextFragment] | None: ...
+
+def assemble_lines(
+    lines: list[LTLine],
+    page_id: str,
+    number_on_document: int,
+    first_index: int,
+    geometry: tuple[float, float, float, float, float],
+    constructors: tuple[type[BBox], type[PathSegment], type[VectorEvidence], type[PatternColor]],
+) -> list[VectorEvidence] | None: ...

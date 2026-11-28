@@ -12,7 +12,7 @@ type Constructors<'py> = (
 );
 type PageGeometry = (f64, f64, f64, f64, f64);
 
-fn number<'py>(value: Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>>> {
+pub(crate) fn number<'py>(value: Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>>> {
     if value.cast_exact::<PyFloat>().is_ok() {
         return Ok(Some(value));
     }
@@ -23,7 +23,9 @@ fn number<'py>(value: Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>>> 
     Ok(None)
 }
 
-fn numeric_tuple<'py>(values: &Bound<'py, PyTuple>) -> PyResult<Option<Bound<'py, PyTuple>>> {
+pub(crate) fn numeric_tuple<'py>(
+    values: &Bound<'py, PyTuple>,
+) -> PyResult<Option<Bound<'py, PyTuple>>> {
     // Exact floats and their tuple are immutable, so no conversion is needed.
     if values
         .iter()
@@ -41,7 +43,7 @@ fn numeric_tuple<'py>(values: &Bound<'py, PyTuple>) -> PyResult<Option<Bound<'py
     PyTuple::new(values.py(), converted).map(Some)
 }
 
-fn color<'py>(
+pub(crate) fn color<'py>(
     raw: &Bound<'py, PyAny>,
     pattern: &Constructor<'py>,
 ) -> PyResult<Option<Bound<'py, PyAny>>> {
