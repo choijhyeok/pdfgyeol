@@ -2,8 +2,8 @@ use std::borrow::Cow;
 use std::collections::{hash_map::Entry, HashMap};
 use std::str;
 
-use pyo3::types::{PyBytes, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
-use pyo3::{intern, prelude::*};
+use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyDict, PyList, PyString, PyTuple};
 
 mod glyphs;
 mod lines;
@@ -385,11 +385,9 @@ impl<'data, 'py> ContentParser<'data, 'py> {
         mut self,
         interpreter: &Bound<'py, PyAny>,
         operators: &Bound<'py, PyDict>,
-        matrix_handler: Option<&Bound<'py, PyAny>>,
     ) -> ParseResult<ContentDispatch> {
         let mut methods = HashMap::new();
         let mut instructions = Vec::new();
-        let mut matrix_ops = 0;
         let mut args = vec![interpreter.clone()];
         let no_operands = PyTuple::new(self.py, [interpreter])?;
         loop {
@@ -398,14 +396,7 @@ impl<'data, 'py> ContentParser<'data, 'py> {
                 if args.len() != 1 {
                     return Err(ParseError::Unsupported);
                 }
-                return Ok(ContentDispatch {
-                    instructions,
-                    matrix_handler: matrix_handler
-                        .filter(|_| matrix_ops > 0)
-                        .map(|method| method.clone().unbind()),
-                    matrix_ops,
-                    applied_matrices: 0,
-                });
+                return Ok(ContentDispatch { instructions });
             }
             match self.token(0)? {
                 Token::Operand(value) => args.push(value),
@@ -422,9 +413,6 @@ impl<'data, 'py> ContentParser<'data, 'py> {
                     if args.len() - 1 != *arity {
                         return Err(ParseError::Unsupported);
                     }
-                    let native_matrix = word == b"cm"
-                        && *arity == 6
-                        && matrix_handler.is_some_and(|stock| method.is(stock));
                     let args = if *arity == 0 {
                         no_operands.clone()
                     } else {
@@ -432,86 +420,11 @@ impl<'data, 'py> ContentParser<'data, 'py> {
                         args.push(interpreter.clone());
                         tuple
                     };
-                    if native_matrix {
-                        matrix_ops += 1;
-                    }
-                    instructions.push((
-                        (!native_matrix).then(|| method.clone().unbind()),
-                        args.unbind(),
-                    ));
+                    instructions.push((method.clone().unbind(), args.unbind()));
                 }
             }
         }
     }
-}
-
-fn matrix_values<'py>(items: impl Iterator<Item = Bound<'py, PyAny>>) -> Option<[f64; 6]> {
-    let mut matrix = [0.0; 6];
-    for (value, item) in matrix.iter_mut().zip(items) {
-        *value = if let Ok(value) = item.cast_exact::<PyFloat>() {
-            value.value()
-        } else {
-            item.cast_exact::<PyInt>().ok()?.extract().ok()?
-        };
-        if !value.is_finite() {
-            return None;
-        }
-    }
-    Some(matrix)
-}
-
-type MatrixCache<'py> = Option<(Bound<'py, PyTuple>, [f64; 6])>;
-
-fn current_coefficients<'py>(
-    matrix: &Bound<'py, PyTuple>,
-    cache: &mut MatrixCache<'py>,
-) -> Option<[f64; 6]> {
-    if let Some((cached, coefficients)) = cache {
-        if matrix.is(cached) {
-            return Some(*coefficients);
-        }
-    }
-    if matrix.len() != 6 {
-        return None;
-    }
-    let coefficients = matrix_values(matrix.iter())?;
-    *cache = Some((matrix.clone(), coefficients));
-    Some(coefficients)
-}
-
-fn concatenate<'py>(args: &Bound<'py, PyTuple>, cache: &mut MatrixCache<'py>) -> PyResult<bool> {
-    let py = args.py();
-    let mut args = args.iter();
-    let interpreter = args.next().expect("prepared cm interpreter");
-    let Some([a1, b1, c1, d1, e1, f1]) = matrix_values(args) else {
-        return Ok(false);
-    };
-    let current = interpreter.getattr(intern!(py, "ctm"))?;
-    let Ok(current) = current.cast_exact::<PyTuple>() else {
-        return Ok(false);
-    };
-    let Some([a0, b0, c0, d0, e0, f0]) = current_coefficients(current, cache) else {
-        return Ok(false);
-    };
-    // cm coerces all input coefficients to floats. Keep the order of the
-    // multiply/add operations in pdfminer's mult_matrix.
-    let next = [
-        a0 * a1 + c0 * b1,
-        b0 * a1 + d0 * b1,
-        a0 * c1 + c0 * d1,
-        b0 * c1 + d0 * d1,
-        a0 * e1 + c0 * f1 + e0,
-        b0 * e1 + d0 * f1 + f0,
-    ];
-    if !next.iter().all(|x| x.is_finite()) {
-        return Ok(false);
-    }
-    let next = PyTuple::new(py, next)?;
-    interpreter.setattr(intern!(py, "ctm"), &next)?;
-    interpreter
-        .getattr(intern!(py, "device"))?
-        .call_method1(intern!(py, "set_ctm"), (next,))?;
-    Ok(true)
 }
 
 /// Lex a bounded PDF content stream into (operands, operator) batches.
@@ -535,12 +448,7 @@ fn parse_content<'py>(
 
 #[pyclass(module = "pdfgyeol._native")]
 struct ContentDispatch {
-    // A null handler represents an audited cm. Keep the instruction
-    // the same size as a stock Python call.
-    instructions: Vec<(Option<Py<PyAny>>, Py<PyTuple>)>,
-    matrix_handler: Option<Py<PyAny>>,
-    matrix_ops: usize,
-    applied_matrices: usize,
+    instructions: Vec<(Py<PyAny>, Py<PyTuple>)>,
 }
 
 #[pymethods]
@@ -549,35 +457,9 @@ impl ContentDispatch {
         self.instructions.len()
     }
 
-    #[getter]
-    fn matrix_ops(&self) -> usize {
-        self.matrix_ops
-    }
-
-    #[getter]
-    fn applied_matrices(&self) -> usize {
-        self.applied_matrices
-    }
-
     fn run(&mut self, py: Python<'_>) -> PyResult<()> {
-        self.matrix_ops = 0;
-        self.applied_matrices = 0;
-        let stock_matrix = self.matrix_handler.take();
-        // Repeated q/cm/Q sequences often restore the same immutable tuple.
-        // Always read the current tuple from the interpreter before using it.
-        let mut matrix_cache = None;
         for (method, args) in self.instructions.drain(..) {
-            if let Some(method) = method {
-                method.bind(py).call1(args.into_bound(py))?;
-            } else if concatenate(args.bind(py), &mut matrix_cache)? {
-                self.applied_matrices += 1;
-            } else {
-                stock_matrix
-                    .as_ref()
-                    .expect("prepared cm handler")
-                    .bind(py)
-                    .call1(args.into_bound(py))?;
-            }
+            method.bind(py).call1(args.into_bound(py))?;
         }
         Ok(())
     }
@@ -593,47 +475,10 @@ fn prepare_dispatch(
     interpreter: &Bound<'_, PyAny>,
     operators: &Bound<'_, PyDict>,
 ) -> PyResult<Option<ContentDispatch>> {
-    dispatch_plan(py, data, literal, keyword, interpreter, operators, None)
-}
-
-#[pyfunction]
-fn prepare_matrix_dispatch(
-    py: Python<'_>,
-    data: &[u8],
-    literal: &Bound<'_, PyAny>,
-    keyword: &Bound<'_, PyAny>,
-    interpreter: &Bound<'_, PyAny>,
-    operators: &Bound<'_, PyDict>,
-    matrix_handler: &Bound<'_, PyAny>,
-) -> PyResult<Option<ContentDispatch>> {
-    dispatch_plan(
-        py,
-        data,
-        literal,
-        keyword,
-        interpreter,
-        operators,
-        Some(matrix_handler),
-    )
-}
-
-fn dispatch_plan(
-    py: Python<'_>,
-    data: &[u8],
-    literal: &Bound<'_, PyAny>,
-    keyword: &Bound<'_, PyAny>,
-    interpreter: &Bound<'_, PyAny>,
-    operators: &Bound<'_, PyDict>,
-    matrix_handler: Option<&Bound<'_, PyAny>>,
-) -> PyResult<Option<ContentDispatch>> {
     if data.len() > MAX_STREAM_BYTES {
         return Ok(None);
     }
-    match ContentParser::new(py, data, literal, keyword).prepare_dispatch(
-        interpreter,
-        operators,
-        matrix_handler,
-    ) {
+    match ContentParser::new(py, data, literal, keyword).prepare_dispatch(interpreter, operators) {
         Ok(dispatch) => Ok(Some(dispatch)),
         Err(ParseError::Unsupported) => Ok(None),
         Err(ParseError::Python(error)) => Err(error),
@@ -645,7 +490,6 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<ContentDispatch>()?;
     module.add_function(wrap_pyfunction!(parse_content, module)?)?;
     module.add_function(wrap_pyfunction!(prepare_dispatch, module)?)?;
-    module.add_function(wrap_pyfunction!(prepare_matrix_dispatch, module)?)?;
     module.add_function(wrap_pyfunction!(text::horizontal_glyphs, module)?)?;
     module.add_function(wrap_pyfunction!(text::identity_cached_glyphs, module)?)?;
     module.add_function(wrap_pyfunction!(glyphs::assemble_glyphs, module)?)?;
