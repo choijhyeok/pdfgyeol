@@ -30,7 +30,36 @@ type ParseResult<T> = Result<T, ParseError>;
 
 enum Token<'data, 'py> {
     Operand(Bound<'py, PyAny>),
+    Number(Number),
     Keyword(&'data [u8]),
+}
+
+enum Number {
+    Int(i64),
+    Float(f64),
+}
+
+impl Number {
+    fn into_object(self, py: Python<'_>) -> Bound<'_, PyAny> {
+        match self {
+            Self::Int(value) => value.into_pyobject(py).unwrap().into_any(),
+            Self::Float(value) => value.into_pyobject(py).unwrap().into_any(),
+        }
+    }
+}
+
+enum Argument {
+    Number(Number),
+    Object(Py<PyAny>),
+}
+
+impl Argument {
+    fn into_object(self, py: Python<'_>) -> Bound<'_, PyAny> {
+        match self {
+            Self::Number(number) => number.into_object(py),
+            Self::Object(value) => value.into_bound(py),
+        }
+    }
 }
 
 struct ContentParser<'data, 'py> {
@@ -124,7 +153,7 @@ impl<'data, 'py> ContentParser<'data, 'py> {
             b'<' if self.starts_with(b"<<") => self.dict(depth)?,
             b'<' => self.hex_string()?,
             b'[' => self.array(depth)?,
-            b'+' | b'-' | b'.' | b'0'..=b'9' => self.number()?,
+            b'+' | b'-' | b'.' | b'0'..=b'9' => return Ok(Token::Number(self.number()?)),
             b'\'' | b'"' => {
                 self.pos += 1;
                 return Ok(Token::Keyword(&self.data[start..self.pos]));
@@ -154,6 +183,7 @@ impl<'data, 'py> ContentParser<'data, 'py> {
         self.skip_space();
         match self.token(depth)? {
             Token::Operand(value) => Ok(value),
+            Token::Number(value) => Ok(value.into_object(self.py)),
             Token::Keyword(word) => Ok(self.keyword.call1((PyBytes::new(self.py, word),))?),
         }
     }
@@ -208,7 +238,7 @@ impl<'data, 'py> ContentParser<'data, 'py> {
         Ok(literal)
     }
 
-    fn number(&mut self) -> ParseResult<Bound<'py, PyAny>> {
+    fn number(&mut self) -> ParseResult<Number> {
         let start = self.pos;
         if matches!(self.peek(), Some(b'+' | b'-')) {
             self.pos += 1;
@@ -230,10 +260,10 @@ impl<'data, 'py> ContentParser<'data, 'py> {
             str::from_utf8(&self.data[start..self.pos]).map_err(|_| ParseError::Unsupported)?;
         if decimal {
             let value = text.parse::<f64>().map_err(|_| ParseError::Unsupported)?;
-            Ok(value.into_pyobject(self.py).unwrap().into_any())
+            Ok(Number::Float(value))
         } else {
             let value = text.parse::<i64>().map_err(|_| ParseError::Unsupported)?;
-            Ok(value.into_pyobject(self.py).unwrap().into_any())
+            Ok(Number::Int(value))
         }
     }
 
@@ -370,6 +400,7 @@ impl<'data, 'py> ContentParser<'data, 'py> {
             }
             match self.token(0)? {
                 Token::Operand(value) => args.append(value)?,
+                Token::Number(value) => args.append(value.into_object(self.py))?,
                 Token::Keyword(word) => {
                     let operator = self.operators.entry(word).or_insert_with(|| {
                         PyString::new(self.py, str::from_utf8(word).expect("ASCII keyword"))
@@ -388,18 +419,23 @@ impl<'data, 'py> ContentParser<'data, 'py> {
     ) -> ParseResult<ContentDispatch> {
         let mut methods = HashMap::new();
         let mut instructions = Vec::new();
-        let mut args = vec![interpreter.clone()];
-        let no_operands = PyTuple::new(self.py, [interpreter])?;
+        let mut operands = Vec::new();
+        let mut end = 0;
         loop {
             self.skip_space();
             if self.pos == self.data.len() {
-                if args.len() != 1 {
+                if operands.len() != end {
                     return Err(ParseError::Unsupported);
                 }
-                return Ok(ContentDispatch { instructions });
+                return Ok(ContentDispatch {
+                    instructions,
+                    operands,
+                    interpreter: Some(interpreter.clone().unbind()),
+                });
             }
             match self.token(0)? {
-                Token::Operand(value) => args.push(value),
+                Token::Operand(value) => operands.push(Argument::Object(value.unbind())),
+                Token::Number(value) => operands.push(Argument::Number(value)),
                 Token::Keyword(word) => {
                     let (method, arity) = match methods.entry(word) {
                         Entry::Occupied(entry) => entry.into_mut(),
@@ -410,17 +446,11 @@ impl<'data, 'py> ContentParser<'data, 'py> {
                             entry.insert(operator.extract::<(Bound<'py, PyAny>, usize)>()?)
                         }
                     };
-                    if args.len() - 1 != *arity {
+                    if operands.len() - end != *arity {
                         return Err(ParseError::Unsupported);
                     }
-                    let args = if *arity == 0 {
-                        no_operands.clone()
-                    } else {
-                        let tuple = PyTuple::new(self.py, args.drain(..))?;
-                        args.push(interpreter.clone());
-                        tuple
-                    };
-                    instructions.push((method.clone().unbind(), args.unbind()));
+                    end = operands.len();
+                    instructions.push((method.clone().unbind(), *arity));
                 }
             }
         }
@@ -448,7 +478,10 @@ fn parse_content<'py>(
 
 #[pyclass(module = "pdfgyeol._native")]
 struct ContentDispatch {
-    instructions: Vec<(Py<PyAny>, Py<PyTuple>)>,
+    instructions: Vec<(Py<PyAny>, usize)>,
+    // One buffer per validated stream. Only top-level numbers stay unboxed.
+    operands: Vec<Argument>,
+    interpreter: Option<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -458,8 +491,30 @@ impl ContentDispatch {
     }
 
     fn run(&mut self, py: Python<'_>) -> PyResult<()> {
-        for (method, args) in self.instructions.drain(..) {
-            method.bind(py).call1(args.into_bound(py))?;
+        let Some(interpreter) = self.interpreter.take() else {
+            return Ok(());
+        };
+        let interpreter = interpreter.bind(py);
+        // Drain both buffers even if a handler raises, like the eager plan.
+        let mut operands = self.operands.drain(..);
+        let instructions = self.instructions.drain(..);
+        let no_operands = PyTuple::new(py, [interpreter])?;
+        for (method, arity) in instructions {
+            if arity == 0 {
+                method.bind(py).call1(&no_operands)?;
+            } else {
+                let args = (0..arity + 1).map(|index| {
+                    if index == 0 {
+                        interpreter.clone()
+                    } else {
+                        operands
+                            .next()
+                            .expect("validated operand count")
+                            .into_object(py)
+                    }
+                });
+                method.bind(py).call1(PyTuple::new(py, args)?)?;
+            }
         }
         Ok(())
     }
