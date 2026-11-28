@@ -3,11 +3,12 @@
 from hashlib import sha256
 from importlib.metadata import version
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unicodedata import normalize
 
 import pdfplumber
-from pdfminer.layout import LTChar, LTItem, LTPage
+from pdfminer.layout import LTChar, LTItem, LTLine, LTPage
+from pdfminer.utils import Point
 from pdfplumber.page import Page as PDFPage
 
 from .models import (
@@ -48,6 +49,34 @@ class _ExtractionPage(PDFPage):
 
 
 class _NativePage(_ExtractionPage):
+    def process_object(self, obj: LTItem) -> dict[str, Any]:
+        if type(obj) is not LTLine or obj.original_path is None:
+            return super().process_object(obj)
+
+        media_x, media_top = self.mediabox[:2]
+        height = self.height
+        # pdfplumber's path contains nested points despite the LTLine annotation.
+        path = cast(list[tuple[str, *tuple[Point, ...]]], obj.original_path)
+        point2coord = self.point2coord
+        return {
+            "object_type": "line",
+            "x0": obj.x0 + media_x if media_x != 0 else obj.x0,
+            "x1": obj.x1 + media_x if media_x != 0 else obj.x1,
+            "top": (height - obj.y1) + media_top,
+            "bottom": (height - obj.y0) + media_top,
+            "pts": list(map(point2coord, obj.pts)),
+            "path": [(command, *map(point2coord, points)) for command, *points in path],
+            "linewidth": obj.linewidth,
+            "stroke": obj.stroke,
+            "fill": obj.fill,
+            "evenodd": obj.evenodd,
+            # The audited interpreter supplies only numbers, pattern names,
+            # and tuples here. Dash is taken verbatim by pdfplumber.
+            "stroking_color": obj.stroking_color,
+            "non_stroking_color": obj.non_stroking_color,
+            "dash": obj.dashing_style,
+        }
+
     @property
     def layout(self) -> LTPage:
         if not hasattr(self, "_layout"):

@@ -22,3 +22,12 @@ def horizontal_glyphs(
     float, bool,
     list[tuple[str, float, float, float, tuple[float, float, float, float], float, float]],
 ] | None: ...
+
+def straight_line(
+    matrix: tuple[float, float, float, float, float, float],
+    start: tuple[str, float, float],
+    end: tuple[str, float, float],
+) -> tuple[
+    tuple[float, float], tuple[float, float],
+    tuple[float, float, float, float], float, float,
+] | None: ...
