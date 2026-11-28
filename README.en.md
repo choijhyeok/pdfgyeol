@@ -138,7 +138,7 @@ Decision made **0 reading-order corrections** on six held-out synthetic document
 
 pdfgyeol works with PDFs that have a text layer. It records image positions on image-only pages and does not run OCR. It primarily supports horizontal, left-to-right layouts. Reading order or cell assignments can be wrong with vertical text, right-to-left layouts, or tables with incomplete or missing borders. [Layout rules and limitations (Korean)](docs/layout.md#검증과-한계)
 
-For Korean insurance policies, use `--insurance` or `parse_pdf(..., insurance=True)` to see which articles, riders, or schedules the text belongs to. This option adds local annotations that reference the existing lines. [Insurance policy option (Korean)](docs/insurance.md)
+For Korean insurance policies, use `--insurance` or `parse_pdf(..., insurance=True)` to identify articles, riders, and schedules. The offline profiler uses document-wide heading styles and line geometry, then links each section to the original resolved lines. Layout Decision is a separate opt-in. [Insurance policy option (Korean)](docs/insurance.md)
 
 ## Documentation
 

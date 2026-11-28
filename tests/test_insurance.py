@@ -7,6 +7,7 @@ from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.pdfgen.canvas import Canvas
 
 from pdfgyeol import DecisionConfig, cli, decision, parse_pdf
+from pdfgyeol.insurance import annotate_insurance
 
 _FONT = "HYSMyeongJo-Medium"  # Predefined PDF CID font. No external font fixture.
 
@@ -169,7 +170,10 @@ def test_ambiguous_headings_and_unbounded_insets_leave_text_unassigned(tmp_path)
 def test_first_article_below_bounded_example_uses_inset_boundary(tmp_path):
     path = tmp_path / "inset-first.pdf"
     canvas = _pdf(path)
-    canvas.roundRect(48, 660, 245, 85, 5)
+    for x in (48, 293):
+        canvas.line(x, 660, x, 740)
+    for y in (660, 740):
+        canvas.line(48, y, 293, y)
     _put(canvas, 723, "【예시안내】", x=60)
     _put(canvas, 700, "제1조(가상 예시)", x=60)
     _put(canvas, 676, "참고용 문구입니다.", x=60)
@@ -179,6 +183,108 @@ def test_first_article_below_bounded_example_uses_inset_boundary(tmp_path):
     assert _references(parse_pdf(path, insurance=True)) == [
         ("article", "제2조(보험계약 기록)", None, ("이 자료를 별도로 보관합니다.",)),
     ]
+
+
+def test_profile_recognizes_bracket_styles_and_inline_body_on_source_lines(tmp_path):
+    path = tmp_path / "profile.pdf"
+    canvas = _pdf(path)
+    _put(canvas, 730, "가상기록 보통약관", size=16)
+    _put(canvas, 694, "제1조【보험계약의 기록】")
+    _put(canvas, 680, "보험계약 정보를 작성합니다.", x=50)
+    _put(canvas, 645, "제2조【기록의 확인】")
+    _put(canvas, 631, "제1조(보험계약의 기록)에서 정한 정보를 확인합니다.", x=50)
+    canvas.showPage()
+    _put(canvas, 730, "제3조【기록의 수정】")
+    _put(canvas, 716, "수정한 내역을 보관합니다.", x=50)
+    _put(canvas, 675, "제4조(기록의 보관) 이 보험계약의 사본을")
+    _put(canvas, 661, "별도의 장소에 보관합니다.", x=50)
+    _put(canvas, 624, "제5조(준용) 이 보험계약에 공통 기준을 적용합니다.")
+    canvas.save()
+
+    document = parse_pdf(path, insurance=True)
+    assert document.insurance == annotate_insurance(document.pages)
+    assert _references(document) == [
+        ("article", "제1조【보험계약의 기록】", None, ("보험계약 정보를 작성합니다.",)),
+        ("article", "제2조【기록의 확인】", None, ("제1조(보험계약의 기록)에서 정한 정보를 확인합니다.",)),
+        ("article", "제3조【기록의 수정】", None, ("수정한 내역을 보관합니다.",)),
+        ("article", "제4조(기록의 보관) 이 보험계약의 사본을", None, ("별도의 장소에 보관합니다.",)),
+        ("article", "제5조(준용) 이 보험계약에 공통 기준을 적용합니다.", None, ()),
+    ]
+
+
+def test_numbered_rider_survives_child_chapter_and_late_example(tmp_path):
+    path = tmp_path / "rider.pdf"
+    canvas = _pdf(path)
+    rider = "2-4. 가상기록 특별약관"
+    _put(canvas, 736, "2. 기록 관련 특별약관", size=20)
+    _put(canvas, 698, rider, size=15)
+    _put(canvas, 667, "2-4-1. 공통 보장", size=15)
+    _put(canvas, 635, "제1관 기록의 처리", size=14)
+    _put(canvas, 603, "제1조[보험금의 기록]")
+    _put(canvas, 589, "보험금 지급 기록을 작성합니다.")
+    _put(canvas, 115, "【예시안내】")
+    canvas.showPage()
+    _put(canvas, 740, "이 줄에는 예시가 이어집니다.")
+    _put(canvas, 704, "제2조[열람 절차]")
+    _put(canvas, 690, "해당 기록을 열람할 수 있습니다.")
+    _put(canvas, 652, "2-4-2. 별도 보호 특별약관", size=15)
+    _put(canvas, 620, "제1조[별도 기록]")
+    _put(canvas, 606, "다른 기록을 확인합니다.")
+    _put(canvas, 562, "제2편 기본 계약", size=16)
+    _put(canvas, 530, "제1조[보험계약의 변경]")
+    _put(canvas, 516, "기본 계약의 변경 내용을 확인합니다.")
+    canvas.save()
+
+    assert _references(parse_pdf(path, insurance=True)) == [
+        ("rider", rider, None, ()),
+        ("article", "제1조[보험금의 기록]", rider, ("보험금 지급 기록을 작성합니다.",)),
+        ("article", "제2조[열람 절차]", rider, ("해당 기록을 열람할 수 있습니다.",)),
+        ("article", "제1조[별도 기록]", rider, ("다른 기록을 확인합니다.",)),
+        ("article", "제1조[보험계약의 변경]", None, ("기본 계약의 변경 내용을 확인합니다.",)),
+    ]
+
+
+def test_statutory_excerpt_and_appendix_are_separate_from_articles(tmp_path):
+    path = tmp_path / "appendix.pdf"
+    canvas = _pdf(path)
+    _put(canvas, 730, "제1조[보험계약의 기록]", size=14)
+    _put(canvas, 702, "보험계약의 내용을 확인합니다.")
+    _put(canvas, 680, "【가상기록 관리 규정】", x=70)
+    _put(canvas, 661, "제7조(인용 규정)", x=70)
+    _put(canvas, 647, "규정의 인용문입니다.", x=70)
+    _put(canvas, 620, "보험계약의 변경 내역도 확인합니다.")
+    canvas.showPage()
+    _put(canvas, 728, "(부표 1)", size=14)
+    _put(canvas, 699, "제12조(별표의 인용 규정)", size=14)
+    _put(canvas, 680, "별표의 인용문입니다.")
+    canvas.save()
+
+    assert _references(parse_pdf(path, insurance=True)) == [
+        ("article", "제1조[보험계약의 기록]", None, (
+            "보험계약의 내용을 확인합니다.", "보험계약의 변경 내역도 확인합니다.",
+        )),
+        ("appendix", "(부표 1)", None, ("제12조(별표의 인용 규정)", "별표의 인용문입니다.")),
+    ]
+
+
+def test_running_page_numbers_exclude_aligned_sequence_but_keep_body_amounts(tmp_path):
+    path = tmp_path / "counters.pdf"
+    canvas = _pdf(path)
+    amounts = {1: (70, "101"), 3: (140, "103"), 5: (210, "105")}
+    for page in range(1, 6):
+        if page == 1:
+            _put(canvas, 720, "제1조(보험금의 기준)", size=14)
+        _put(canvas, 678, "보험금 산정 자료입니다.")
+        if page in amounts:
+            x, amount = amounts[page]
+            _put(canvas, 70, amount, x=x)
+        _put(canvas, 35, str(page), x=300)
+        canvas.showPage()
+    canvas.save()
+
+    sections = _references(parse_pdf(path, insurance=True))
+    assert len(sections) == 1
+    assert [line for line in sections[0][3] if line.isdigit()] == ["101", "103", "105"]
 
 
 def test_generic_korean_document_has_no_insurance_annotations(tmp_path):
