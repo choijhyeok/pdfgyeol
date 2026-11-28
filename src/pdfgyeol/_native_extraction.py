@@ -44,6 +44,18 @@ except ImportError:
 else:
     _prepare_dispatch = prepare_dispatch
 
+_prepare_matrix_dispatch: Callable[
+    [bytes, Callable[[str | bytes], Any], Callable[[bytes], Any], PDFPageInterpreter,
+     dict[str, _Operator], Callable[..., None]],
+    "ContentDispatch | None",
+] | None
+try:
+    from ._native import prepare_matrix_dispatch
+except ImportError:
+    _prepare_matrix_dispatch = None
+else:
+    _prepare_matrix_dispatch = prepare_matrix_dispatch
+
 _Glyph = tuple[float, str, bool]
 _PositionedGlyph = tuple[str, float, float, float, Rect, float, float]
 _TextPlan = tuple[float, bool, list[_PositionedGlyph]]
@@ -96,6 +108,23 @@ _OPERATORS: dict[str, _Operator] = {
     for name, method in vars(PDFPageInterpreter).items()
     if name.startswith("do_")
 }
+_STOCK_MATRIX = PDFPageInterpreter.do_cm
+
+
+def _prepare_dispatch_with_matrices(
+    data: bytes,
+    literal: Callable[[str | bytes], Any],
+    keyword: Callable[[bytes], Any],
+    interpreter: PDFPageInterpreter,
+    operators: dict[str, _Operator],
+) -> "ContentDispatch | None":
+    if _prepare_matrix_dispatch is None:
+        return prepare_dispatch(data, literal, keyword, interpreter, operators)
+    return _prepare_matrix_dispatch(data, literal, keyword, interpreter, operators, _STOCK_MATRIX)
+
+
+if _prepare_dispatch is not None and _prepare_matrix_dispatch is not None:
+    _prepare_dispatch = _prepare_dispatch_with_matrices
 
 
 class NativeInterpreter(PDFPageInterpreter):

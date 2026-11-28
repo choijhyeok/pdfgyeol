@@ -11,6 +11,10 @@ def parse_content(
 
 class ContentDispatch:
     def __len__(self) -> int: ...
+    @property
+    def matrix_ops(self) -> int: ...
+    @property
+    def applied_matrices(self) -> int: ...
     def run(self) -> None: ...
 
 def prepare_dispatch(
@@ -19,6 +23,15 @@ def prepare_dispatch(
     keyword: Callable[[bytes], Any],
     interpreter: object,
     operators: dict[str, tuple[Callable[..., None], int]],
+) -> ContentDispatch | None: ...
+
+def prepare_matrix_dispatch(
+    data: bytes,
+    literal: Callable[[str | bytes], Any],
+    keyword: Callable[[bytes], Any],
+    interpreter: object,
+    operators: dict[str, tuple[Callable[..., None], int]],
+    matrix_handler: Callable[..., None],
 ) -> ContentDispatch | None: ...
 
 def horizontal_glyphs(
