@@ -52,12 +52,11 @@ class _NativePage(_ExtractionPage):
     def layout(self) -> LTPage:
         if not hasattr(self, "_layout"):
             # Match pdfplumber's Page.layout with the audited interpreter adapter.
-            from pdfplumber.page import PDFPageAggregatorWithMarkedContent
             from pdfplumber.utils.exceptions import PdfminerException
 
-            from ._native_extraction import NativeInterpreter
+            from ._native_extraction import NativeInterpreter, NativePageAggregator
 
-            device = PDFPageAggregatorWithMarkedContent(
+            device = NativePageAggregator(
                 self.pdf.rsrcmgr, pageno=self.page_number, laparams=self.pdf.laparams,
             )
             interpreter = NativeInterpreter(self.pdf.rsrcmgr, device)
@@ -192,7 +191,7 @@ def extract_pdf(path: str | Path, *, password: str | None = None) -> Document:
         plumber_version = version("pdfplumber")
         miner_version = version("pdfminer.six")
         # Use stock pdfplumber object processing until dependency upgrades
-        # have been audited for the projected fields and native lexer.
+        # have been audited for the projected fields and native extraction.
         project_chars = (plumber_version, miner_version) == ("0.11.11", "20260107")
         page_class = _ExtractionPage
         if project_chars:
