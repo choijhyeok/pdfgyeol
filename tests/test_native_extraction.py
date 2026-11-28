@@ -179,14 +179,73 @@ def _stream(content: bytes) -> PDFStream:
     return stream
 
 
+def test_dispatch_materializes_numeric_operands_at_python_handler() -> None:
+    native = pytest.importorskip("pdfgyeol._native")
+
+    class Recorder(PDFPageInterpreter):
+        def __init__(self, resources, device):
+            super().__init__(resources, device)
+            self.calls = []
+
+        def do_Inspect(self, a, b, c, d, e, f, g):
+            self.calls.append((a, b, c, d, e, f, g))
+
+        def do_Sample(self, label, values, amount):
+            self.calls.append((label, values, amount))
+
+        def do_End(self):
+            self.calls.append(())
+
+    content = (
+        b"-0 -0.0 +.0 9223372036854775807 -9223372036854775808 "
+        b"9007199254740993 9007199254740993. Inspect "
+        b"/F#31 [1. -.0 true << /Value 2 >>] +.125 Sample End"
+    )
+    operators = {
+        "Inspect": (Recorder.do_Inspect, 7), "Sample": (Recorder.do_Sample, 3),
+        "End": (Recorder.do_End, 0),
+    }
+    actual = _interpreter(Recorder)
+    expected = _interpreter(Recorder)
+    plan = native.prepare_dispatch(content, LIT, KWD, actual, operators)
+    assert plan is not None and len(plan) == 3
+    assert actual.calls == []
+    expected.execute([_stream(content)])
+    plan.run()
+    plan.run()
+    assert len(plan) == 0
+    assert _typed(actual.calls) == _typed(expected.calls)
+    assert len(actual.calls) == 3
+
+
+@pytest.mark.parametrize("number", [
+    b"9223372036854775808", b"-9223372036854775809", b"0." + b"1" * 63, b"1e2", b"1.2.3",
+], ids=["positive-overflow", "negative-overflow", "over-width", "exponent", "second-period"])
+def test_numeric_dispatch_declines_whole_stream_before_call(number: bytes) -> None:
+    native = pytest.importorskip("pdfgyeol._native")
+    calls = []
+
+    def record(interpreter, amount):
+        calls.append(amount)
+
+    # Start with an otherwise runnable command. A rejected operand in the
+    # second command must not partially execute the first one.
+    content = b"2 w " + number + b" w"
+    assert native.prepare_dispatch(content, LIT, KWD, object(), {"w": (record, 1)}) is None
+    assert native.parse_content(content, LIT, KWD) is None
+    assert calls == []
+
+
 @pytest.mark.parametrize(("content", "initial", "native_plan"), [
     (b"q 1 0 0 1 -0.0 5 cm BT -1 0 -0.0 1 -0.0 7 Tm [(A) 5 ( B)] TJ ET Q "
      b"BT 1 -0.0 0 1 -0.0 0 Tm ET", [], True),
     (b"q 27 Unknown 2 w Q 4 6", [], False),
+    (b"2 w 9223372036854775808 w", [], False),
     (b"1 w 2 3 m 4 l w", [8], None),
     (b"1 0 0 rg .5 scn 2 w [(partial)", [], False),
     (b"/DeviceRGB cs .1 .2 .3 scn /DeviceRGB CS .4 .5 .6 SCN 5 w", [], False),
-], ids=["matrix-and-state", "unknown-and-trailing", "dirty-and-short", "partial-lex", "variable-color"])
+], ids=["matrix-and-state", "unknown-and-trailing", "integer-overflow", "dirty-and-short",
+        "partial-lex", "variable-color"])
 def test_dispatch_and_stack_fallback_match_pdfminer(
     content: bytes, initial: list[int], native_plan: bool | None, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
