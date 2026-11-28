@@ -1,5 +1,6 @@
-"""Differential checks for the optional PDF content parser."""
+"""Differential checks for optional native PDF extraction."""
 
+import logging
 import subprocess
 import sys
 from dataclasses import asdict
@@ -10,12 +11,13 @@ from zlib import compress
 
 import pdfplumber
 import pytest
+from pdfminer.layout import LTChar
 from pdfminer.pdfinterp import PDFContentParser
 from pdfminer.pdftypes import PDFStream
 from pdfminer.psparser import KWD, LIT, PSEOF, PSKeyword, keyword_name
 
 from pdfgyeol import extract_pdf
-from pdfgyeol.extraction import _extract_page
+from pdfgyeol.extraction import _NativePage, _extract_page
 from test_extraction import pdf_stream, write_pdf
 
 
@@ -170,3 +172,73 @@ print(dumps([asdict(page) for page in document.pages]))
     )
     document_id, page_json = result.stdout.splitlines()
     assert page_json == _stock_page_json(native_content_pdf, document_id)
+
+
+def test_native_horizontal_runs_match_stock_and_fall_back_atomically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    if (version("pdfplumber"), version("pdfminer.six")) != ("0.11.11", "20260107"):
+        pytest.skip("native PDF extraction requires the audited dependencies")
+    native = pytest.importorskip("pdfgyeol._native")
+    from pdfgyeol import _native_extraction
+
+    path = tmp_path / "positioned-text.pdf"
+    content = (
+        b"BT /F1 12.25 Tf 77.5 Tz -0.5 Tc 1.25 Tw -0.75 Ts 11 TL "
+        b"0.5 -0.125 .25 1 14 -0.0 Tm "
+        b"/Span << /MCID 4 >> BDC [(A B) -24.125 () 120 (CD)] TJ "
+        b"(EF) Tj (GH) ' 2.5 0.25 (I J) \" EMC ET\n"
+        b"BT /F1 9 Tf -1 0 0 1 100 100 Tm [(K) /Bad (L)] TJ (M) Tj "
+        b"(" + b"N" * 4097 + b") Tj (O) Tj ET\n"
+        b"BT /F1 0 Tf 0 1 -1 0 -0.0 -0.0 Tm (P Q) Tj ET\n"
+        b"BT /F2 9 Tf 50 130 Td <00410042> Tj ET"
+    )
+    write_pdf(path, [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [-10 -20 200 180] /Rotate 90 "
+        b"/Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 4 0 R >>",
+        pdf_stream(content),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Type /Font /Subtype /Type0 /BaseFont /TestVertical /Encoding /Identity-V "
+        b"/DescendantFonts [7 0 R] /ToUnicode /Identity-V >>",
+        b"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /TestVertical "
+        b"/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> >>",
+    ])
+    batches: list[tuple[str, ...]] = []
+
+    def track(*args):
+        result = native.horizontal_glyphs(*args)
+        if result is not None:
+            batches.append(tuple(row[0] for row in result[2]))
+        return result
+
+    monkeypatch.setattr(_native_extraction, "_horizontal_glyphs", track)
+    document = extract_pdf(path)
+    assert dumps([asdict(page) for page in document.pages]) == _stock_page_json(path, document.id)
+    assert batches == [tuple(text) for text in ("A BCD", "EF", "GH", "I J", "M", "O", "P Q")]
+    assert any("Cannot render horizontal string" in record.message for record in caplog.records)
+    assert "".join(char.text for char in document.pages[0].fragments).endswith("OP QAB")
+    with pdfplumber.open(path) as pdf:
+        stock = pdf.pages[0]
+        page = _NativePage(pdf, stock.page_obj, stock.page_number)
+        def tags(layout):
+            return [(char.mcid, char.tag) for char in layout if isinstance(char, LTChar)]
+
+        assert tags(page.layout) == tags(stock.layout)
+        assert tags(page.layout)[0] == (4, "Span")
+
+    batches.clear()
+    with caplog.at_level(logging.DEBUG, logger="pdfminer.cmapdb"):
+        assert extract_pdf(path) == document
+    assert not batches
+
+
+def test_native_horizontal_geometry_rejects_entire_out_of_range_run() -> None:
+    native = pytest.importorskip("pdfgyeol._native")
+    glyph = (0.5, "A", False)
+    params = ((1, 0, 0, 1, 0, 0), (0, 0), 10, 1, 0, 0, 0, 0.01, -0.25)
+    assert native.horizontal_glyphs([glyph], *params) is not None
+    assert native.horizontal_glyphs([glyph, 1 << 60], *params) is None
+    assert native.horizontal_glyphs([glyph, (1e308, "B", False)], *params) is None
+    assert native.horizontal_glyphs([glyph] * 4097, *params) is None
