@@ -18,6 +18,8 @@ from pdfminer.psparser import KWD, LIT
 from pdfminer.utils import Matrix, PathSegment, Point, Rect
 from pdfplumber.page import PDFPageAggregatorWithMarkedContent
 
+from ._cm_audit import audit_cm
+
 if TYPE_CHECKING:
     from ._native import ContentDispatch
 
@@ -108,7 +110,7 @@ _OPERATORS: dict[str, _Operator] = {
     for name, method in vars(PDFPageInterpreter).items()
     if name.startswith("do_")
 }
-_STOCK_MATRIX = PDFPageInterpreter.do_cm
+_verified_cm = audit_cm() if _prepare_matrix_dispatch is not None else None
 
 
 def _prepare_dispatch_with_matrices(
@@ -118,12 +120,14 @@ def _prepare_dispatch_with_matrices(
     interpreter: PDFPageInterpreter,
     operators: dict[str, _Operator],
 ) -> "ContentDispatch | None":
-    if _prepare_matrix_dispatch is None:
-        return prepare_dispatch(data, literal, keyword, interpreter, operators)
-    return _prepare_matrix_dispatch(data, literal, keyword, interpreter, operators, _STOCK_MATRIX)
+    if _prepare_matrix_dispatch is not None and _verified_cm is not None:
+        handler = _verified_cm()
+        if handler is not None:
+            return _prepare_matrix_dispatch(data, literal, keyword, interpreter, operators, handler)
+    return prepare_dispatch(data, literal, keyword, interpreter, operators)
 
 
-if _prepare_dispatch is not None and _prepare_matrix_dispatch is not None:
+if _prepare_dispatch is not None and _verified_cm is not None:
     _prepare_dispatch = _prepare_dispatch_with_matrices
 
 

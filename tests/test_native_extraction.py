@@ -304,12 +304,14 @@ def test_matrix_dispatch_preserves_ctm_and_stock_coercion(
 
     expected = trace(PDFPageInterpreter)
     assert trace(ne.NativeInterpreter) == expected
-    assert observed == [(4, 2)]
+    audited_python = sys.implementation.name == "cpython" and sys.version_info[:2] in ((3, 11), (3, 12))
+    expected_observations = [(4, 2)] if audited_python else []
+    assert observed == expected_observations
     warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
     assert len(warnings) == 2 and warnings[0] == warnings[1]
     monkeypatch.setattr(ne, "_prepare_matrix_dispatch", None)
     assert trace(ne.NativeInterpreter) == expected
-    assert observed == [(4, 2)]
+    assert observed == expected_observations
 
 
 def test_matrix_dispatch_retains_custom_handler_and_preflight_boundary() -> None:

@@ -1,0 +1,146 @@
+"""Compare public extraction with stock dispatch in fresh processes."""
+
+import json
+import subprocess
+import sys
+from importlib.metadata import version
+from pathlib import Path
+
+import pytest
+
+from test_extraction import pdf_stream, write_pdf
+
+
+@pytest.fixture
+def cm_compat_pdf(tmp_path: Path) -> Path:
+    path = tmp_path / "cm-compat.pdf"
+    page = (
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 320 320] "
+        b"/Resources << /Font << /F 7 0 R >> /XObject << /Outer 8 0 R >> >> /Contents "
+    )
+    content = (
+        b"q 1 -0.0 .125 1 -0.0 11 cm .5000000000000001 -.25 0 1 30.125 20 cm "
+        b".2 .3 .4 RG 1 2 m 81 19 l S /Outer Do Q q -1 0 0 1 200 29 cm "
+        b"/Span << /MCID 2 >> BDC BT /F 14 Tf 3 42 Td (PDF) Tj ET EMC Q"
+    )
+    form = b"/Type /XObject /Subtype /Form /BBox [0 0 120 120] /Matrix [1 0 .25 1 2 -1] "
+    write_pdf(path, [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+        page + b"5 0 R >>", page + b"6 0 R >>",
+        pdf_stream(content), pdf_stream(content),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        pdf_stream(b"q 0 1 -1 0 65 2 cm 0 0 20 10 re f /Inner Do Q",
+                   form + b"/Resources << /XObject << /Inner 9 0 R >> >>"),
+        pdf_stream(b"q .125 0 0 .75 1 8 cm .3 .6 .1 rg BT /F 8 Tf 1 9 Td (Form) Tj ET Q",
+                   form + b"/Resources << /Font << /F 7 0 R >> >>"),
+    ])
+    return path
+
+
+_TRACE = r"""
+import hashlib
+import json
+import sys
+from dataclasses import asdict
+from functools import wraps
+from types import FunctionType
+
+import pdfplumber
+from pdfminer import pdfinterp
+from pdfplumber.utils.exceptions import PdfminerException
+
+mode, path = sys.argv[1:]
+cls = pdfinterp.PDFPageInterpreter
+handler = cls.do_cm
+calls, plans = [], []
+namespace = vars(pdfinterp)
+namespace.update(cm_trace=calls, cm_offset=7, cm_stop=5 if mode == "early-error" else None,
+                 cm_delegate=FunctionType(handler.__code__, namespace))
+exec('def cm_override(self, a, b, c, d, e, f):\n'
+     '    cm_trace.append((a, b, c, d, e, f))\n'
+     '    if len(cm_trace) == cm_stop:\n'
+     '        raise RuntimeError("custom cm failure")\n'
+     '    return cm_delegate(self, a, b, c, d, e + cm_offset, f)\n', namespace)
+override = wraps(handler)(namespace.pop("cm_override"))
+if mode in ("early", "early-error"):
+    cls.do_cm = override
+assert "pdfgyeol._native_extraction" not in sys.modules
+
+from pdfgyeol import extract_pdf, extraction, _native_extraction as ne
+
+prepare = ne._prepare_matrix_dispatch
+assert prepare is not None
+
+class ObservedPlan:
+    def __init__(self, plan):
+        self.plan = plan
+
+    def run(self):
+        self.plan.run()
+        plans.append(self.plan.applied_matrices)
+
+def observe(*args):
+    plan = prepare(*args)
+    return ObservedPlan(plan) if plan is not None else None
+
+ne._prepare_matrix_dispatch = observe
+if mode in ("table", "code"):
+    extract_pdf(path)
+    plans.clear()
+    if mode == "table":
+        ne._OPERATORS["cm"] = (override, 6)
+    else:
+        handler.__code__ = override.__code__
+
+def snapshot(pages):
+    wire = json.dumps([asdict(page) for page in pages], ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(wire.encode()).hexdigest()
+
+def trace():
+    return [[(type(x).__name__, x.hex() if type(x) is float else x) for x in row] for row in calls]
+
+try:
+    document = extract_pdf(path)
+    native = snapshot(document.pages)
+    doc_id = document.id
+except PdfminerException as error:
+    native = [type(error).__name__, type(error.__context__).__name__, str(error)]
+    doc_id = "exception-fixture"
+observed, native_trace = sum(plans), trace()
+calls.clear()
+if mode != "normal":
+    cls.do_cm = override
+
+try:
+    with pdfplumber.open(path) as pdf:
+        stock = snapshot(extraction._extract_page(page, doc_id) for page in pdf.pages)
+except PdfminerException as error:
+    stock = [type(error).__name__, type(error.__context__).__name__, str(error)]
+print(json.dumps({"native": native, "stock": stock, "applied": observed,
+                  "calls": native_trace, "reference_calls": trace()}))
+"""
+
+
+@pytest.mark.parametrize("mode", ["early", "early-error", "table", "code", "normal"])
+def test_cm_compat_in_fresh_process(cm_compat_pdf: Path, mode: str) -> None:
+    if (version("pdfplumber"), version("pdfminer.six")) != ("0.11.11", "20260107"):
+        pytest.skip("native PDF extraction requires the audited dependencies")
+    pytest.importorskip("pdfgyeol._native")
+    process = subprocess.run(
+        [sys.executable, "-B", "-c", _TRACE, mode, str(cm_compat_pdf)],
+        capture_output=True, text=True,
+    )
+    assert process.returncode == 0, process.stderr
+    result = json.loads(process.stdout)
+    assert result["native"] == result["stock"]
+    assert result["calls"] == result["reference_calls"]
+    if mode == "normal":
+        audited_python = sys.implementation.name == "cpython" and sys.version_info[:2] in ((3, 11), (3, 12))
+        assert result["applied"] == (10 if audited_python else 0)
+        assert result["calls"] == []
+    else:
+        assert result["applied"] == 0
+        assert len(result["calls"]) == (5 if mode == "early-error" else 10)
+        if mode == "early-error":
+            assert result["native"] == ["PdfminerException", "RuntimeError", "custom cm failure"]
