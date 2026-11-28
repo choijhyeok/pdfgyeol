@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Callable, cast
 
 from pdfminer import settings
+from pdfminer.cmapdb import IdentityCMap
 from pdfminer.layout import LTChar, LTLine
 from pdfminer.pdfcolor import PDFColorSpace
 from pdfminer.pdfdevice import PDFTextSeq
@@ -56,6 +57,17 @@ except ImportError:
     _horizontal_glyphs = None
 else:
     _horizontal_glyphs = horizontal_glyphs
+
+_identity_cached_glyphs: Callable[
+    [PDFTextSeq, dict[int, _Glyph], Matrix, Point, float, float, float, float, float, float, float],
+    _TextPlan | None,
+] | None
+try:
+    from ._native import identity_cached_glyphs
+except ImportError:
+    _identity_cached_glyphs = None
+else:
+    _identity_cached_glyphs = identity_cached_glyphs
 
 _straight_line: Callable[
     [Matrix, tuple[str, float, float], tuple[str, float, float]],
@@ -249,17 +261,28 @@ class NativePageAggregator(PDFPageAggregatorWithMarkedContent):
                 and type(font.fontname) is str
                 and not settings.STRICT
                 and not any(logger.isEnabledFor(logging.DEBUG) for logger in _TEXT_LOGGERS)):
-            try:
-                items = self._prepare_text(seq, font)
-                if items:
-                    plan = _horizontal_glyphs(
-                        items, matrix, pos, fontsize, scaling, charspace, wordspace,
-                        rise, dxscale, font.get_descent(),
-                    )
-            except (PDFException, ArithmeticError, LookupError, TypeError, ValueError):
-                # Replay the whole show operation to preserve malformed-font
-                # errors and their order relative to rendering.
-                pass
+            if (_identity_cached_glyphs is not None and type(font) is PDFCIDFont
+                    and type(font.cmap) is IdentityCMap):
+                glyphs = self._font_glyphs.get(font)
+                if glyphs:
+                    try:
+                        plan = _identity_cached_glyphs(
+                            seq, glyphs, matrix, pos, fontsize, scaling, charspace, wordspace,
+                            rise, dxscale, font.get_descent(),
+                        )
+                    except (PDFException, ArithmeticError, LookupError, TypeError, ValueError):
+                        pass
+            if plan is None:
+                try:
+                    items = self._prepare_text(seq, font)
+                    if items:
+                        plan = _horizontal_glyphs(
+                            items, matrix, pos, fontsize, scaling, charspace, wordspace,
+                            rise, dxscale, font.get_descent(),
+                        )
+                except (PDFException, ArithmeticError, LookupError, TypeError, ValueError):
+                    # Preserve malformed-font errors and their order in stock rendering.
+                    pass
         if plan is None:
             return super().render_string_horizontal(
                 seq, matrix, pos, font, fontsize, scaling, charspace, wordspace,

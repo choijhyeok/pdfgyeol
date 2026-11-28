@@ -355,3 +355,97 @@ def test_native_horizontal_geometry_rejects_entire_out_of_range_run() -> None:
     assert native.horizontal_glyphs([glyph, 1 << 60], *params) is None
     assert native.horizontal_glyphs([glyph, (1e308, "B", False)], *params) is None
     assert native.horizontal_glyphs([glyph] * 4097, *params) is None
+
+
+@pytest.mark.parametrize("seq", [
+    [b"\x00\x20", b"\x00\x21"],
+    [b"\x00\x20", b"\x00"],
+    [b"\x00\x20", b"\x00\x20\x00\x20"],
+    [b"\x00\x20", b""],
+    [b"\x00\x20", True],
+    [b"\x00\x20", float("inf")],
+    [b"\x00\x20", 1 << 60],
+    [b"\x00\x20", type("Bytes", (bytes,), {})(b"\x00\x20")],
+    [b"\x00\x20"] * 2049,
+    (b"\x00\x20",),
+], ids=["miss", "odd", "wide", "empty", "bool", "infinity", "int-range", "bytes-subclass", "budget", "tuple"])
+def test_cached_identity_rejects_whole_show(seq) -> None:
+    native = pytest.importorskip("pdfgyeol._native")
+    cache = {32: (0.5, "A", True)}
+    params = ((1, -0.0, 0, 1, -0.0, 0), (0, 0), 10, 1, -0.0, 2, 0, 0.01, -0.25)
+    assert native.identity_cached_glyphs(seq, cache, *params) is None
+    assert cache == {32: (0.5, "A", True)}
+    accepted = native.identity_cached_glyphs([b"\x00\x20", -0.0, 5, b"\x00\x20"], cache, *params)
+    expected = native.horizontal_glyphs([cache[32], -0.0, 5, cache[32]], *params)
+    assert accepted is not None and _typed(accepted) == _typed(expected)
+
+
+def _cid_font(unicode_object: int, encoding: bytes = b"Identity-H") -> bytes:
+    return (b"<< /Type /Font /Subtype /Type0 /BaseFont /SharedName /Encoding /" + encoding
+            + b" /DescendantFonts [9 0 R] /ToUnicode %d 0 R >>" % unicode_object)
+
+
+def _unicode_map(first: bytes, second: bytes) -> bytes:
+    return pdf_stream(b"begincmap\n1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n"
+                      b"2 beginbfchar\n<0020> <%s>\n<0021> <%s>\nendbfchar\nendcmap" % (first, second))
+
+
+def test_cached_identity_show_reuses_only_the_current_page_font(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    if (version("pdfplumber"), version("pdfminer.six")) != ("0.11.11", "20260107"):
+        pytest.skip("native PDF extraction requires the audited dependencies")
+    native = pytest.importorskip("pdfgyeol._native")
+    from pdfgyeol import _native_extraction as ne
+
+    path = tmp_path / "identity-forms.pdf"
+    page = b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] "
+    form = (b"/Type /XObject /Subtype /Form /BBox [0 0 160 160] "
+            b"/Resources << /Font << /Same 12 0 R >> /XObject << /Inner 14 0 R >> >>")
+    outer_show = b"BT /Same 14 Tf 1 0 -0.0 1 10 220 Tm <0020> Tj <0020> Tj ET"
+    write_pdf(path, [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+        page + b"/Resources << /Font << /Same 7 0 R /Vertical 8 0 R /Byte 15 0 R >> "
+        b"/XObject << /Form 13 0 R >> >> /Contents 5 0 R >>",
+        page + b"/Resources << /Font << /Same 7 0 R >> >> /Contents 6 0 R >>",
+        pdf_stream(outer_show + b" q 1 0 0 1 25 20 cm /Form Do Q "
+                   b"BT /Same 12 Tf 1 0 0 1 10 100 Tm 2 Tc -1 Tw 89 Tz "
+                   b"/Span << /MCID 2 >> BDC [<0020> -0.0 -31.25 <0020> <0021>] TJ "
+                   b"[<0020> -0.0 <0021>] TJ [<002000> -3 <00200021>] TJ <0020> Tj EMC ET "
+                   b"BT /Vertical 11 Tf 20 55 Td <0020> Tj <0021> Tj ET "
+                   b"BT /Byte 11 Tf 20 35 Td <20> Tj <20> Tj ET"),
+        pdf_stream(outer_show),
+        _cid_font(10),
+        _cid_font(10, b"Identity-V"),
+        b"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /SharedName /W [32 [420 630]] "
+        b"/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> >>",
+        _unicode_map(b"0041", b"00660069"),
+        _unicode_map(b"03A9", b"0044"),
+        _cid_font(11),
+        pdf_stream(b"BT /Same 10 Tf 3 45 Td <0020> Tj <0020> Tj ET /Inner Do", form),
+        pdf_stream(b"BT /Same 12 Tf 4 25 Td <0020> Tj <0020> Tj ET",
+                   b"/Type /XObject /Subtype /Form /BBox [0 0 80 80] /Resources << /Font << /Same 7 0 R >> >>"),
+        _cid_font(10, b"OneByteIdentityH"),
+    ])
+    events = []
+
+    def track(seq, cache, *args):
+        plan = native.identity_cached_glyphs(seq, cache, *args)
+        events.append((cache[32][1], None if plan is None else "".join(row[0] for row in plan[2])))
+        return plan
+
+    monkeypatch.setattr(ne, "_identity_cached_glyphs", track)
+    document = extract_pdf(path)
+    assert dumps([asdict(page) for page in document.pages]) == _stock_page_json(path, document.id)
+    assert events == [
+        ("A", "A"), ("Ω", "Ω"), ("A", "A"), ("A", "A"), ("A", None),
+        ("A", "Afi"), ("A", None), ("A", "A"), ("A", "A"),
+    ]
+
+    events.clear()
+    with caplog.at_level(logging.DEBUG, logger="pdfminer.cmapdb"):
+        assert extract_pdf(path) == document
+    assert not events
+    monkeypatch.setattr(ne, "_identity_cached_glyphs", None)
+    assert extract_pdf(path) == document

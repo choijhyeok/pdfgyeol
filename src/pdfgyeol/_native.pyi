@@ -37,6 +37,23 @@ def horizontal_glyphs(
     list[tuple[str, float, float, float, tuple[float, float, float, float], float, float]],
 ] | None: ...
 
+def identity_cached_glyphs(
+    seq: object,
+    cache: dict[int, tuple[float, str, bool]],
+    matrix: tuple[float, float, float, float, float, float],
+    pos: tuple[float, float],
+    fontsize: float,
+    scaling: float,
+    charspace: float,
+    wordspace: float,
+    rise: float,
+    dxscale: float,
+    descent: float,
+) -> tuple[
+    float, bool,
+    list[tuple[str, float, float, float, tuple[float, float, float, float], float, float]],
+] | None: ...
+
 def straight_line(
     matrix: tuple[float, float, float, float, float, float],
     start: tuple[str, float, float],
