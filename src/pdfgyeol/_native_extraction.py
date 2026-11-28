@@ -263,11 +263,11 @@ class NativePageAggregator(PDFPageAggregatorWithMarkedContent):
                 and not any(logger.isEnabledFor(logging.DEBUG) for logger in _TEXT_LOGGERS)):
             if (_identity_cached_glyphs is not None and type(font) is PDFCIDFont
                     and type(font.cmap) is IdentityCMap):
-                glyphs = self._font_glyphs.get(font)
-                if glyphs:
+                cached_glyphs = self._font_glyphs.get(font)
+                if cached_glyphs:
                     try:
                         plan = _identity_cached_glyphs(
-                            seq, glyphs, matrix, pos, fontsize, scaling, charspace, wordspace,
+                            seq, cached_glyphs, matrix, pos, fontsize, scaling, charspace, wordspace,
                             rise, dxscale, font.get_descent(),
                         )
                     except (PDFException, ArithmeticError, LookupError, TypeError, ValueError):
