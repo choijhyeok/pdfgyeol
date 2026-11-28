@@ -162,3 +162,42 @@ def test_cm_compat_in_fresh_process(cm_compat_pdf: Path, mode: str, optimize: in
     if mode == "early-error":
         assert result["native"] == ["PdfminerException", "RuntimeError", "custom cm failure"]
     assert (result["plans"] > 0) == (mode not in ("late-class", "table-tokenizer"))
+
+
+def test_cm_missing_before_native_import(tmp_path: Path) -> None:
+    if (version("pdfplumber"), version("pdfminer.six")) != ("0.11.11", "20260107"):
+        pytest.skip("native PDF extraction requires the audited dependencies")
+    pytest.importorskip("pdfgyeol._native")
+    path = tmp_path / "text.pdf"
+    write_pdf(path, [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] "
+        b"/Resources << /Font << /F 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        pdf_stream(b"BT /F 12 Tf 10 50 Td (test) Tj ET"),
+    ])
+    script = """
+import sys
+from dataclasses import asdict
+from json import dumps
+
+import pdfplumber
+from pdfminer.pdfinterp import PDFPageInterpreter
+
+from pdfgyeol import extract_pdf, extraction
+
+assert "pdfgyeol._native_extraction" not in sys.modules
+del PDFPageInterpreter.do_cm
+document = extract_pdf(sys.argv[1])
+actual, = document.pages
+assert "pdfgyeol._native_extraction" in sys.modules
+assert len(actual.fragments) == 4
+with pdfplumber.open(sys.argv[1]) as pdf:
+    stock = extraction._extract_page(pdf.pages[0], document.id)
+assert dumps(asdict(actual)) == dumps(asdict(stock))
+"""
+    process = subprocess.run(
+        [sys.executable, "-IB", "-c", script, str(path)], capture_output=True, text=True,
+    )
+    assert process.returncode == 0, process.stderr

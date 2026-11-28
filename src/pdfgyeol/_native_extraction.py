@@ -96,7 +96,8 @@ _OPERATORS: dict[str, _Operator] = {
     for name, method in vars(PDFPageInterpreter).items()
     if name.startswith("do_")
 }
-_IMPORTED_CM = _OPERATORS["cm"]
+_IMPORTED_CM = _OPERATORS.get("cm")
+_IMPORTED_CM_METHOD = _IMPORTED_CM[0] if _IMPORTED_CM is not None else None
 
 
 class NativeInterpreter(PDFPageInterpreter):
@@ -111,7 +112,7 @@ class NativeInterpreter(PDFPageInterpreter):
 
         # A class override installed after import needs pdfminer's live method
         # lookup. An explicit override in the private dispatch table takes precedence.
-        if (getattr(PDFPageInterpreter, "do_cm", None) is not _IMPORTED_CM[0]
+        if (getattr(PDFPageInterpreter, "do_cm", None) is not _IMPORTED_CM_METHOD
                 and _OPERATORS.get("cm") is _IMPORTED_CM):
             super().execute(streams)
             return
