@@ -98,3 +98,46 @@ def test_accepted_batch_preserves_transformed_patterned_glyphs(native, projectio
         assert dumps([asdict(record) for record in records]) == dumps(
             [asdict(record) for record in old.fragments[:4]],
         )
+
+
+def test_batch_reuses_only_exact_colors_and_keeps_live_constructor_calls(
+    native, native_content_pdf: Path,
+) -> None:
+    with pdfplumber.open(native_content_pdf) as pdf:
+        page = pdf.pages[0]
+        glyphs = [item for item in extraction._layout_leaves(page.layout._objs) if type(item) is LTChar][:4]
+        assert len(glyphs) == 4
+        for glyph in glyphs:
+            glyph.graphicstate = glyph.graphicstate.copy()
+        shared = (-0.0, .25, .5)
+        replacement = (.5, .25, 0.0)
+        for glyph in glyphs:
+            glyph.graphicstate.scolor = shared
+            glyph.graphicstate.ncolor = ("P",)
+
+        pattern_calls = []
+        strokes = []
+
+        def pattern(name, *components):
+            pattern_calls.append((name, components))
+            return extraction.PatternColor(name, *components)
+
+        def style(font, size, upright, stroke, fill):
+            strokes.append(stroke)
+            if len(strokes) == 2:
+                glyphs[2].graphicstate.scolor = replacement
+            return extraction.TextStyle(font, size, upright, stroke, fill)
+
+        records = native.assemble_glyphs(
+            glyphs, "päge", 1, 99_999_998, (*page.mediabox[:2], page.height, *page.bbox[:2]),
+            (extraction.BBox, style, extraction.TextFragment, pattern),
+        )
+        assert records is not None
+        assert len(strokes) == 4
+        assert strokes[0] is shared and strokes[1] is shared and strokes[3] is shared
+        assert strokes[2] is replacement
+        assert pattern_calls == [("P", ())] * 4
+        assert records[0].style.stroking_color[0].hex() == "-0x0.0p+0"
+        assert [record.id for record in records] == [
+            "päge:c99999998", "päge:c99999999", "päge:c100000000", "päge:c100000001",
+        ]

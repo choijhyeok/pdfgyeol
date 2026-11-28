@@ -28,7 +28,7 @@ pub(crate) fn numeric_tuple<'py>(
 ) -> PyResult<Option<Bound<'py, PyTuple>>> {
     // Exact floats and their tuple are immutable, so no conversion is needed.
     if values
-        .iter()
+        .iter_borrowed()
         .all(|value| value.cast_exact::<PyFloat>().is_ok())
     {
         return Ok(Some(values.clone()));
@@ -47,6 +47,19 @@ pub(crate) fn color<'py>(
     raw: &Bound<'py, PyAny>,
     pattern: &Constructor<'py>,
 ) -> PyResult<Option<Bound<'py, PyAny>>> {
+    project_color(raw, pattern, None)
+}
+
+fn project_color<'py>(
+    raw: &Bound<'py, PyAny>,
+    pattern: &Constructor<'py>,
+    recent: Option<&mut Option<Bound<'py, PyTuple>>>,
+) -> PyResult<Option<Bound<'py, PyAny>>> {
+    if let Some(current) = recent.as_ref().and_then(|recent| recent.as_ref()) {
+        if raw.is(current) {
+            return Ok(Some(raw.clone()));
+        }
+    }
     let py = raw.py();
     if raw.cast_exact::<PyString>().is_ok() {
         return pattern.call1((raw,)).map(Some);
@@ -80,7 +93,16 @@ pub(crate) fn color<'py>(
                     .transpose();
             }
         }
-        return numeric_tuple(values).map(|value| value.map(Bound::into_any));
+        let projected = numeric_tuple(values)?;
+        // Only exact float tuples are returned verbatim. Their elements cannot
+        // change, and a hit keeps the same Python object as the uncached path.
+        // Pattern construction and numeric conversion always follow the usual path.
+        if let (Some(recent), Some(projected)) = (recent, projected.as_ref()) {
+            if projected.is(values) {
+                *recent = Some(values.clone());
+            }
+        }
+        return Ok(projected.map(Bound::into_any));
     }
     number(raw.clone())?
         .map(|value| PyTuple::new(py, [value]).map(Bound::into_any))
@@ -105,6 +127,10 @@ pub fn assemble_glyphs<'py>(
     let (media_x, media_top, height, origin_x, origin_y) = geometry;
     let (bbox, style, fragment, pattern) = constructors;
     let result = PyList::empty(py);
+    let mut stroke_color = None;
+    let mut fill_color = None;
+    let mut id = format!("{prefix}:c");
+    let id_prefix = id.len();
     for (index, glyph) in (first_index..).zip(glyphs.iter()) {
         let font = glyph.getattr(intern!(py, "fontname"))?;
         // For audited LTChar, get_text returns this field verbatim.
@@ -154,15 +180,27 @@ pub fn assemble_glyphs<'py>(
             page_y(y0.value()) - origin_y,
         ))?;
         let state = glyph.getattr(intern!(py, "graphicstate"))?;
-        let Some(stroke) = color(&state.getattr(intern!(py, "scolor"))?, &pattern)? else {
+        let Some(stroke) = project_color(
+            &state.getattr(intern!(py, "scolor"))?,
+            &pattern,
+            Some(&mut stroke_color),
+        )?
+        else {
             return Ok(None);
         };
-        let Some(fill) = color(&state.getattr(intern!(py, "ncolor"))?, &pattern)? else {
+        let Some(fill) = project_color(
+            &state.getattr(intern!(py, "ncolor"))?,
+            &pattern,
+            Some(&mut fill_color),
+        )?
+        else {
             return Ok(None);
         };
         let style = style.call1((font, size, upright, stroke, fill))?;
+        id.truncate(id_prefix);
+        write!(id, "{index:08}").expect("writing to String cannot fail");
         result.append(fragment.call1((
-            format!("{prefix}:c{index:08}"),
+            id.as_str(),
             page_id,
             number_on_document,
             index,
@@ -175,3 +213,4 @@ pub fn assemble_glyphs<'py>(
     }
     Ok(Some(result))
 }
+use std::fmt::Write;
