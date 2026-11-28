@@ -6,6 +6,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyString};
 
 mod text;
+mod vector;
 
 const MAX_STREAM_BYTES: usize = 1024 * 1024;
 const MAX_TOKENS: usize = 250_000;
@@ -393,5 +394,6 @@ fn parse_content<'py>(
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(parse_content, module)?)?;
-    module.add_function(wrap_pyfunction!(text::horizontal_glyphs, module)?)
+    module.add_function(wrap_pyfunction!(text::horizontal_glyphs, module)?)?;
+    module.add_function(wrap_pyfunction!(vector::straight_line, module)?)
 }

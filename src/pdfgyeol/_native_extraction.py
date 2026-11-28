@@ -2,10 +2,10 @@
 
 import logging
 from collections.abc import Sequence
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from pdfminer import settings
-from pdfminer.layout import LTChar
+from pdfminer.layout import LTChar, LTLine
 from pdfminer.pdfcolor import PDFColorSpace
 from pdfminer.pdfdevice import PDFTextSeq
 from pdfminer.pdfexceptions import PDFException
@@ -14,7 +14,7 @@ from pdfminer.pdfinterp import PDFGraphicState, PDFPageInterpreter
 from pdfminer.pdfpage import PDFPage
 from pdfminer.pdftypes import stream_value
 from pdfminer.psparser import KWD, LIT
-from pdfminer.utils import Matrix, Point, Rect
+from pdfminer.utils import Matrix, PathSegment, Point, Rect
 from pdfplumber.page import PDFPageAggregatorWithMarkedContent
 
 _parse_content: Callable[
@@ -41,6 +41,17 @@ except ImportError:
     _horizontal_glyphs = None
 else:
     _horizontal_glyphs = horizontal_glyphs
+
+_straight_line: Callable[
+    [Matrix, tuple[str, float, float], tuple[str, float, float]],
+    tuple[Point, Point, Rect, float, float] | None,
+] | None
+try:
+    from ._native import straight_line
+except ImportError:
+    _straight_line = None
+else:
+    _straight_line = straight_line
 
 
 def native_available() -> bool:
@@ -97,10 +108,57 @@ class NativeInterpreter(PDFPageInterpreter):
 
 
 class NativePageAggregator(PDFPageAggregatorWithMarkedContent):
-    """Keep pdfminer font decoding and batch horizontal glyph positioning."""
+    """Apply native geometry to audited horizontal text and straight lines."""
 
     _font_glyphs: dict[PDFFont, dict[int, _Glyph]]
     _cached_glyph_count: int
+    _stock_painting = False
+
+    def paint_path(
+        self, gstate: PDFGraphicState, stroke: bool, fill: bool, evenodd: bool,
+        path: Sequence[PathSegment],
+    ) -> None:
+        if self._stock_painting or _straight_line is None or settings.STRICT:
+            super().paint_path(gstate, stroke, fill, evenodd, path)
+            return
+        plan = None
+        closed = False
+        if type(path) is list:
+            length = len(path)
+            closed = length == 3 and path[2] == ("h",)
+            if length == 2 or closed:
+                move, line = path[0], path[1]
+                if len(move) == 3 and len(line) == 3 and move[0] == "m" and line[0] == "l":
+                    try:
+                        plan = _straight_line(self.ctm, move, line)
+                    except (TypeError, OverflowError):
+                        pass
+        if plan is None:
+            # Compound paths recursively call this override. Keep their
+            # children in stock rendering once the parent is declined.
+            self._stock_painting = True
+            try:
+                super().paint_path(gstate, stroke, fill, evenodd, path)
+            finally:
+                self._stock_painting = False
+            return
+
+        first, last, bbox, width, height = plan
+        item = LTLine.__new__(LTLine)
+        item.x0, item.y0, item.x1, item.y1 = bbox
+        item.width, item.height, item.bbox = width, height, bbox
+        item.pts = [first, last]
+        item.linewidth = gstate.linewidth
+        item.stroke, item.fill, item.evenodd = stroke, fill, evenodd
+        item.stroking_color, item.non_stroking_color = gstate.scolor, gstate.ncolor
+        # pdfminer stores nested points despite the annotation.
+        original_path: list[tuple[str, Point] | tuple[str]] = [("m", first), ("l", last)]
+        if closed:
+            original_path.append(("h",))
+        item.original_path = cast(list[PathSegment], original_path)
+        item.dashing_style = gstate.dash
+        self.cur_item.add(item)
+        self.tag_cur_item()
 
     def begin_page(self, page: PDFPage, ctm: Matrix) -> None:
         self._font_glyphs = {}
